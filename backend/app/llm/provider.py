@@ -12,10 +12,11 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any, Callable, Awaitable
+from typing import Any, Awaitable, Callable, Optional
 
 import httpx
 
@@ -56,7 +57,12 @@ class BaseProvider:
         raise LLMUnavailable("LLM не налаштований")
 
     async def run_agent(
-        self, system: str, prompt: str, tools: list[ToolSpec], max_steps: int = 12
+        self,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        max_steps: int = 12,
+        on_step: Optional[Callable[[Step], None]] = None,
     ) -> tuple[str, list[Step]]:
         raise LLMUnavailable("LLM не налаштований")
 
@@ -68,21 +74,99 @@ class GeminiProvider(BaseProvider):
     name = "gemini"
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
     THINKING_HEADROOM = 1024   # запас токенів на внутрішні роздуми моделі
+    MAX_RETRIES = 8
+    RETRY_BASE = 8.0           # секунд, подвоюється з кожною спробою
+
+    # Безкоштовний тариф має денні ліміти НА МОДЕЛЬ (у flash — лише 20 запитів
+    # на добу). Тому тримаємо ланцюжок резервних моделей: коли квота основної
+    # вичерпана, агент перемикається й доводить роботу до кінця.
+    FALLBACK_MODELS = [
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash-lite",
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
+        "gemini-3.6-flash",
+    ]
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
+        self.exhausted: set[str] = set()
+
+    def _next_model(self) -> str | None:
+        for candidate in [self.model, *self.FALLBACK_MODELS]:
+            if candidate not in self.exhausted:
+                return candidate
+        return None
+
+    @staticmethod
+    def _retry_delay(body: dict[str, Any]) -> float | None:
+        """Google сам каже, скільки чекати — беремо це значення, а не вгадуємо."""
+        for detail in (body.get("error", {}).get("details") or []):
+            raw = detail.get("retryDelay")
+            if isinstance(raw, str) and raw.endswith("s"):
+                try:
+                    return float(raw[:-1])
+                except ValueError:
+                    continue
+        return None
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
-        # Ключ передаємо заголовком: нові ключі формату AQ.* працюють лише так
-        url = f"{self.BASE}/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            r = await client.post(url, headers={"x-goog-api-key": self.api_key}, json=payload)
-        if r.status_code == 429:
-            raise LLMUnavailable("Gemini: вичерпано безкоштовний ліміт запитів")
-        if r.status_code >= 400:
+        """Один запит до Gemini з обробкою ліміту.
+
+        Агент робить десяток викликів моделі поспіль, а безкоштовний тариф має
+        обмеження на хвилину — без очікування цикл падає на середині.
+        """
+        headers = {"x-goog-api-key": self.api_key}
+
+        for attempt in range(self.MAX_RETRIES):
+            model = self._next_model()
+            if model is None:
+                raise LLMUnavailable(
+                    "Gemini: денні ліміти вичерпані на всіх доступних моделях"
+                )
+            url = f"{self.BASE}/{model}:generateContent"
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                r = await client.post(url, headers=headers, json=payload)
+
+            if r.status_code < 400:
+                return r.json()
+
+            if r.status_code == 429:
+                try:
+                    body = r.json()
+                except ValueError:
+                    body = {}
+                message = body.get("error", {}).get("message", "")
+                if "credits" in message.lower():
+                    raise LLMUnavailable(
+                        "Gemini: у проєкті закінчились кредити — поповніть на ai.studio/projects"
+                    )
+                # Денна квота вичерпана саме для цієї моделі — беремо наступну
+                if "PerDay" in r.text:
+                    log.info("Gemini: денна квота %s вичерпана, перемикаюсь", model)
+                    self.exhausted.add(model)
+                    if model == self.model:
+                        nxt = self._next_model()
+                        if nxt:
+                            self.model = nxt
+                    continue
+                if attempt == self.MAX_RETRIES - 1:
+                    raise LLMUnavailable(
+                        "Gemini: вичерпано ліміт запитів на хвилину, спробуйте за хвилину"
+                    )
+                delay = self._retry_delay(body) or (self.RETRY_BASE * (2 ** attempt))
+                log.info("Gemini 429 — чекаю %.0f с (спроба %d)", delay, attempt + 1)
+                await asyncio.sleep(min(delay + 1, 65))
+                continue
+
+            if r.status_code >= 500 and attempt < self.MAX_RETRIES - 1:
+                await asyncio.sleep(self.RETRY_BASE * (2 ** attempt))
+                continue
+
             raise LLMUnavailable(f"Gemini {r.status_code}: {r.text[:300]}")
-        return r.json()
+
+        raise LLMUnavailable("Gemini: не вдалось отримати відповідь")
 
     @staticmethod
     def _text_of(candidate: dict[str, Any]) -> str:
@@ -106,8 +190,21 @@ class GeminiProvider(BaseProvider):
         return self._text_of(candidates[0]) if candidates else ""
 
     async def run_agent(
-        self, system: str, prompt: str, tools: list[ToolSpec], max_steps: int = 12
+        self,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        max_steps: int = 12,
+        on_step: Optional[Callable[[Step], None]] = None,
     ) -> tuple[str, list[Step]]:
+        def emit(step: Step) -> None:
+            steps.append(step)
+            if on_step:
+                try:
+                    on_step(step)
+                except Exception:  # noqa: BLE001 — прогрес не має валити агента
+                    pass
+
         registry = {t.name: t for t in tools}
         declarations = [
             {"name": t.name, "description": t.description, "parameters": t.parameters}
@@ -137,11 +234,11 @@ class GeminiProvider(BaseProvider):
 
             if not calls:
                 if text:
-                    steps.append(Step(kind="answer", text=text))
+                    emit(Step(kind="answer", text=text))
                 return text, steps
 
             if text:
-                steps.append(Step(kind="think", text=text))
+                emit(Step(kind="think", text=text))
             contents.append({"role": "model", "parts": parts})
 
             responses = []
@@ -156,7 +253,7 @@ class GeminiProvider(BaseProvider):
                         result = await tool.handler(**args)
                     except Exception as exc:  # noqa: BLE001
                         result = {"error": str(exc)[:300]}
-                steps.append(Step(
+                emit(Step(
                     kind="tool", tool=name, args=args,
                     result_preview=json.dumps(result, ensure_ascii=False)[:300],
                 ))
@@ -187,8 +284,21 @@ class AnthropicProvider(BaseProvider):
         return "".join(b.text for b in resp.content if getattr(b, "type", "") == "text").strip()
 
     async def run_agent(
-        self, system: str, prompt: str, tools: list[ToolSpec], max_steps: int = 12
+        self,
+        system: str,
+        prompt: str,
+        tools: list[ToolSpec],
+        max_steps: int = 12,
+        on_step: Optional[Callable[[Step], None]] = None,
     ) -> tuple[str, list[Step]]:
+        def emit(step: Step) -> None:
+            steps.append(step)
+            if on_step:
+                try:
+                    on_step(step)
+                except Exception:  # noqa: BLE001 — прогрес не має валити агента
+                    pass
+
         registry = {t.name: t for t in tools}
         schema = [
             {"name": t.name, "description": t.description, "input_schema": t.parameters}
@@ -209,11 +319,11 @@ class AnthropicProvider(BaseProvider):
 
             if not tool_uses:
                 if text:
-                    steps.append(Step(kind="answer", text=text))
+                    emit(Step(kind="answer", text=text))
                 return text, steps
 
             if text:
-                steps.append(Step(kind="think", text=text))
+                emit(Step(kind="think", text=text))
             messages.append({"role": "assistant", "content": resp.content})
 
             results = []
@@ -226,7 +336,7 @@ class AnthropicProvider(BaseProvider):
                         result = await tool.handler(**(block.input or {}))
                     except Exception as exc:  # noqa: BLE001
                         result = {"error": str(exc)[:300]}
-                steps.append(Step(
+                emit(Step(
                     kind="tool", tool=block.name, args=dict(block.input or {}),
                     result_preview=json.dumps(result, ensure_ascii=False)[:300],
                 ))

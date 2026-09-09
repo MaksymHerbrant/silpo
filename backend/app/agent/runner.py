@@ -25,6 +25,18 @@ log = logging.getLogger("agent")
 
 MAX_STEPS = 14
 
+# Живий прогрес: кроки лягають сюди по мірі виконання, щоб Mini App показував
+# їх у реальному часі, а не чекав 40 секунд на порожньому екрані.
+_progress: dict[str, list[dict[str, Any]]] = {}
+
+
+def live_steps(user_id: str) -> list[dict[str, Any]]:
+    return list(_progress.get(user_id, []))
+
+
+def reset_progress(user_id: str) -> None:
+    _progress[user_id] = []
+
 SYSTEM = """Ти — агент, який складає продуктовий кошик для гостя супермаркету Сільпо.
 
 Твоя робота — не порадити, а ЗІБРАТИ кошик. Гість не має нічого шукати сам.
@@ -125,9 +137,14 @@ async def run(user_id: str, prompt: str, profile: dict[str, Any]) -> AgentRun:
         session = AgentSession(api, ctx, profile)
         tools = build_tools(session)
 
+        def on_step(step: Step) -> None:
+            item = humanize(step, session)
+            if item:
+                _progress.setdefault(user_id, []).append(item)
+
         try:
             answer, steps = await get_provider().run_agent(
-                SYSTEM, prompt, tools, max_steps=MAX_STEPS
+                SYSTEM, prompt, tools, max_steps=MAX_STEPS, on_step=on_step
             )
         except LLMUnavailable as exc:
             result.error = str(exc)

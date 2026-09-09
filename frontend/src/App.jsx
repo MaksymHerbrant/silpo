@@ -1,47 +1,48 @@
-import { useCallback, useEffect, useState } from 'react'
-import Nav from './components/Nav'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, login } from './lib/api'
 import { initTelegram, notify, WebApp } from './lib/telegram'
-import Allergens from './screens/Allergens'
-import DebugLog from './screens/DebugLog'
-import Home from './screens/Home'
+import AgentRun from './screens/AgentRun'
+import AgentStart from './screens/AgentStart'
+import Basket from './screens/Basket'
+import ChooseAction from './screens/ChooseAction'
 import Onboarding from './screens/Onboarding'
-import Swaps from './screens/Swaps'
-import Profile from './screens/Profile'
+import ShoppingList from './screens/ShoppingList'
+import SilpoConnect from './screens/SilpoConnect'
 
-function Loading({ text = 'Аналізуємо кошик…' }) {
-  return (
-    <div className="center">
-      <div className="spinner" />
-      {text}
-    </div>
-  )
+function Loading({ text = 'Вмикаємось…' }) {
+  return <div className="center"><div className="spinner" />{text}</div>
 }
 
+/**
+ * Єдиний потік агента з макетів:
+ * онбординг → запуск → живий трейс → кошик → вибір дії → результат.
+ */
 export default function App() {
   const [state, setState] = useState({ status: 'boot' })
-  const [tab, setTab] = useState('profile')
-  const [analysis, setAnalysis] = useState(null)
-  const [trend, setTrend] = useState(null)
-  const [swaps, setSwaps] = useState(null)
-  const [allergens, setAllergens] = useState(null)
-  const [log, setLog] = useState(null)
-  const [tools, setTools] = useState(null)
-  const [selectedSwap, setSelectedSwap] = useState(null)
+  const [screen, setScreen] = useState('start')
+  const [goals, setGoals] = useState(null)
+  const [context, setContext] = useState(null)
+  const [run, setRun] = useState({ steps: [], draft: [], summary: {}, building: false })
   const [applying, setApplying] = useState(false)
-  const [sendingReport, setSendingReport] = useState(false)
-  const [rebuilding, setRebuilding] = useState(false)
-  const [busy, setBusy] = useState(false)
+  const [applyResult, setApplyResult] = useState(null)
+  const [list, setList] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const poll = useRef(null)
 
   useEffect(() => { initTelegram() }, [])
 
   const boot = useCallback(async () => {
     try {
       const session = await login()
-      setState({
-        status: session.silpo_connected ? 'ready' : 'onboarding',
-        user: session.user,
-      })
+      if (!session.silpo_connected) {
+        setState({ status: 'connect', user: session.user })
+        return
+      }
+      const goalState = await api.getGoals().catch(() => null)
+      setGoals(goalState)
+      setState({ status: 'ready', user: session.user })
+      setScreen(goalState?.configured ? 'start' : 'onboarding')
+      api.agentContext().then(setContext).catch(() => {})
     } catch (e) {
       setState({ status: 'error', message: e.message })
     }
@@ -49,175 +50,128 @@ export default function App() {
 
   useEffect(() => { boot() }, [boot])
 
-  const loadAnalysis = useCallback(async () => {
-    setBusy(true)
+  useEffect(() => () => clearInterval(poll.current), [])
+
+  async function saveGoals(payload) {
+    setSaving(true)
     try {
-      setAnalysis(await api.cartAnalysis())
+      await api.saveGoals(payload)
+      setGoals(await api.getGoals())
+      setScreen('start')
+      api.agentContext().then(setContext).catch(() => {})
     } catch (e) {
-      if (e.status === 409) setState((s) => ({ ...s, status: 'onboarding' }))
-      else setAnalysis({ empty: true, reason: `Не вдалось прочитати кошик: ${e.message}`, items: [] })
+      WebApp.showAlert?.(`Не вдалось зберегти: ${e.message}`)
     } finally {
-      setBusy(false)
+      setSaving(false)
     }
-  }, [])
+  }
 
-  // Профіль — головний екран, тому вантажимо його одразу після логіну,
-  // а кошик підвантажуємо тихо у фоні (він потрібен і для бейджа в навігації).
-  useEffect(() => {
-    if (state.status !== 'ready') return
-    if (!trend) {
-      api.trends(false)
-        .then((data) => {
-          setTrend(data)
-          // Кеш порожній після рестарту бекенду — добудовуємо у фоні
-          if (data?.needs_refresh || data?.building) rebuildTrend(true)
-        })
-        .catch((e) => setTrend({ weeks: [], reason: e.message }))
+  /** Запускає агента й опитує статус, поки той працює — трейс іде наживо. */
+  async function startAgent() {
+    setRun({ steps: [], draft: [], summary: {}, building: true, error: null })
+    setApplyResult(null)
+    setScreen('running')
+    try {
+      await api.agentStart()
+    } catch (e) {
+      setRun((r) => ({ ...r, building: false, error: e.message }))
+      return
     }
-    if (!analysis) loadAnalysis()
-  }, [state.status])
+    clearInterval(poll.current)
+    poll.current = setInterval(async () => {
+      try {
+        const data = await api.agentStatus()
+        setRun(data)
+        if (!data.building) {
+          clearInterval(poll.current)
+          if (!data.error) notify('success')
+        }
+      } catch { /* мережа моргнула — наступна спроба за 2 секунди */ }
+    }, 2000)
+  }
 
-  useEffect(() => {
-    if (state.status !== 'ready') return
-    if (tab === 'swaps' && !swaps) api.swaps(true).then(setSwaps).catch(() => setSwaps({ suggestions: [] }))
-    if (tab === 'allergens' && !allergens) api.allergens().then(setAllergens).catch(() => setAllergens(null))
-    if (tab === 'debug') api.mcpLog(50).then(setLog).catch(() => {})
-  }, [tab, state.status, swaps, allergens])
-
-  async function applySwap(id) {
+  async function applyToCart() {
     setApplying(true)
     try {
-      await api.applySwap(id)
+      setApplyResult(await api.agentApply())
       notify('success')
-      WebApp.showPopup?.({
-        title: 'Готово',
-        message: 'Товар замінено у твоєму кошику Сільпо.',
-        buttons: [{ type: 'ok' }],
-      })
-      setSelectedSwap(null)
-      setSwaps(null)
-      setAnalysis(null)
-      setSwaps(await api.swaps(true))
     } catch (e) {
       notify('error')
-      WebApp.showAlert?.(`Не вдалось застосувати заміну: ${e.message}`)
+      WebApp.showAlert?.(`Не вдалось додати: ${e.message}`)
     } finally {
       setApplying(false)
     }
   }
 
-  /**
-   * Профіль будується у фоні на бекенді (до хвилини), тому тут ми лише
-   * запускаємо його й опитуємо статус. Довгі HTTP-запити через тунель
-   * рвались із 502 — саме тому не чекаємо відповіді синхронно.
-   */
-  async function rebuildTrend(silent = false) {
-    if (!silent) setTrend(null)
-    setRebuilding(true)
+  async function openList() {
     try {
-      await api.rebuildTrends()
-      for (let i = 0; i < 40; i += 1) {
-        await new Promise((r) => setTimeout(r, 3000))
-        const data = await api.trends(false).catch(() => null)
-        if (!data) continue
-        if (!data.building) {
-          setTrend(data)
-          return
-        }
-        if (data.weeks?.length) setTrend(data)   // показуємо часткові дані одразу
-      }
+      setList(await api.shoppingList())
+      setScreen('list')
     } catch (e) {
-      setTrend((prev) => prev || { weeks: [], reason: e.message })
-    } finally {
-      setRebuilding(false)
+      WebApp.showAlert?.(e.message)
     }
   }
 
-  async function sendReport() {
-    setSendingReport(true)
-    try {
-      await api.sendReport()
-      notify('success')
-      WebApp.showPopup?.({
-        title: 'Звіт надіслано',
-        message: 'Подивіться повідомлення від бота — там аналіз кошика і пропозиція заміни.',
-        buttons: [{ type: 'ok' }],
-      })
-    } catch (e) {
-      notify('error')
-      WebApp.showAlert?.(`Не вдалось надіслати: ${e.message}`)
-    } finally {
-      setSendingReport(false)
-    }
-  }
-
-  async function declineSwap(id) {
-    await api.declineSwap(id)
-    setSwaps((s) => ({ ...s, suggestions: s.suggestions.filter((x) => x.id !== id) }))
-  }
-
-  if (state.status === 'boot') return <Loading text="Вмикаємось…" />
+  if (state.status === 'boot') return <Loading />
   if (state.status === 'error') {
     return (
-      <div className="screen">
-        <div className="card center">
-          <p>Щось пішло не так</p>
-          <p className="muted">{state.message}</p>
-          <button className="btn secondary" style={{ marginTop: 14 }} onClick={boot}>
-            Спробувати ще раз
-          </button>
-        </div>
+      <div className="center">
+        <p style={{ color: 'var(--ink)' }}>Щось пішло не так</p>
+        <p className="muted" style={{ marginTop: 8 }}>{state.message}</p>
+        <button className="btn ghost" style={{ marginTop: 18, maxWidth: 240 }} onClick={boot}>
+          Спробувати ще раз
+        </button>
       </div>
     )
   }
-  if (state.status === 'onboarding') {
-    return <Onboarding user={state.user} onConnected={boot} />
+  if (state.status === 'connect') return <SilpoConnect user={state.user} onConnected={boot} />
+
+  if (screen === 'onboarding') return <Onboarding onDone={saveGoals} saving={saving} />
+
+  if (screen === 'running') {
+    return (
+      <AgentRun
+        steps={run.steps || []}
+        building={run.building}
+        error={run.error}
+        onBack={() => setScreen('start')}
+        onOpenBasket={() => setScreen('basket')}
+      />
+    )
   }
 
+  if (screen === 'basket') {
+    return (
+      <Basket
+        draft={run.draft || []}
+        summary={run.summary || {}}
+        answer={run.answer}
+        onBack={() => setScreen('running')}
+        onNext={() => setScreen('action')}
+      />
+    )
+  }
+
+  if (screen === 'action') {
+    return (
+      <ChooseAction
+        applying={applying}
+        result={applyResult}
+        onApply={applyToCart}
+        onList={openList}
+        onBack={() => setScreen('basket')}
+      />
+    )
+  }
+
+  if (screen === 'list') return <ShoppingList list={list} onBack={() => setScreen('action')} />
+
   return (
-    <>
-      {tab === 'profile' && (
-        <Profile
-          trend={trend}
-          cart={analysis}
-          loading={!trend || rebuilding}
-          onRefresh={() => rebuildTrend()}
-          onOpenCart={() => setTab('cart')}
-          onSendReport={sendReport}
-          sending={sendingReport}
-        />
-      )}
-      {tab === 'cart' &&
-        (analysis
-          ? <Home analysis={analysis} onRefresh={() => { setAnalysis(null); loadAnalysis() }}
-                  onSendReport={sendReport} sending={sendingReport} />
-          : <Loading />)}
-      {tab === 'swaps' &&
-        (swaps ? (
-          <Swaps
-            swaps={swaps.suggestions}
-            stats={swaps.stats}
-            selected={selectedSwap}
-            onSelect={setSelectedSwap}
-            onApply={applySwap}
-            onDecline={declineSwap}
-            applying={applying}
-          />
-        ) : (
-          <Loading text="Шукаємо здоровіші аналоги…" />
-        ))}
-      {tab === 'allergens' &&
-        (allergens ? <Allergens data={allergens} /> : <Loading text="Звіряємо склад…" />)}
-      {tab === 'debug' && (
-        <DebugLog
-          log={log}
-          tools={tools}
-          onRefresh={() => api.mcpLog(50).then(setLog)}
-          onLoadTools={() => api.mcpTools().then(setTools)}
-        />
-      )}
-      {busy && tab !== 'home' && null}
-      <Nav tab={tab} onChange={setTab} cartCount={analysis && !analysis.empty ? analysis.items?.length : 0} />
-    </>
+    <AgentStart
+      context={context}
+      goalLabel={goals?.targets?.goal_label || context?.profile?.goal_label}
+      running={run.building}
+      onRun={startAgent}
+    />
   )
 }

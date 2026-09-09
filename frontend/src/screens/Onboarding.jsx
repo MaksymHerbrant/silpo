@@ -1,69 +1,96 @@
 import { useState } from 'react'
-import { api } from '../lib/api'
-import { WebApp } from '../lib/telegram'
+import Screen from '../components/Screen'
 
-export default function Onboarding({ user, onConnected }) {
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState(null)
+const GOALS = [
+  { key: 'less_sugar', label: 'Менше цукру' },
+  { key: 'save_money', label: 'Заощадити гроші' },
+  { key: 'muscle', label: "Набрати м'язи" },
+  { key: 'healthier', label: 'Здоровіший раціон' },
+]
 
-  async function connect() {
-    setBusy(true)
-    setError(null)
-    try {
-      const { authorize_url, demo_mode } = await api.silpoStart()
-      if (demo_mode) return onConnected()
-      // Telegram WebView нестабільно тримає сторонні OAuth-popup'и,
-      // тому авторизацію відкриваємо в зовнішньому браузері.
-      WebApp.openLink(authorize_url, { try_instant_view: false })
-      setError(
-        'Заверши вхід у браузері, що відкрився. Після цього Telegram поверне тебе сюди — ' +
-          'натисни «Я вже увійшов».',
-      )
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setBusy(false)
-    }
+const DIETS = [
+  { key: 'gluten', label: 'Без глютену' },
+  { key: 'lactoza', label: 'Без лактози' },
+  { key: 'vegetarian', label: 'Вегетаріанська' },
+  { key: 'none', label: 'Немає' },
+]
+
+/**
+ * Онбординг за 15 секунд. Стать і вік не питаємо — вони вже є в профілі Сільпо,
+ * обмеження теж підтягуються звідти, ці пілюлі лише доповнюють їх.
+ */
+export default function Onboarding({ onDone, saving }) {
+  const [goal, setGoal] = useState('less_sugar')
+  const [budget, setBudget] = useState(1500)
+  const [diets, setDiets] = useState([])
+  const [household, setHousehold] = useState(1)
+
+  function toggleDiet(key) {
+    if (key === 'none') return setDiets([])
+    setDiets((d) => (d.includes(key) ? d.filter((x) => x !== key) : [...d, key]))
   }
 
   return (
-    <div className="screen">
-      <div className="card">
-        <h2>Привіт{user?.first_name ? `, ${user.first_name}` : ''} 👋</h2>
-        <p className="muted">
-          «Нутрі-Кошик» аналізує те, що ти вже купуєш у Сільпо. Нічого вносити руками не треба:
-          дані про товари беруться напряму з твого кошика та історії замовлень.
-        </p>
-      </div>
-
-      <div className="card">
-        <h3>Що ти отримаєш</h3>
-        <p className="muted">
-          • Рейтинг здоров'я кошика 0–100 і клас A–E<br />
-          • Розклад БЖУ та доданого цукру<br />
-          • Попередження про алергени з твого профілю Сільпо<br />
-          • Тижневий тренд і пропозиції здоровіших замін
-        </p>
-      </div>
-
-      <div className="card">
-        <h3>Під'єднай акаунт Сільпо</h3>
-        <p className="muted" style={{ marginBottom: 14 }}>
-          Авторизація відбувається на боці Сільпо (OAuth 2.1 + PKCE). Токен зберігається лише на
-          нашому сервері в зашифрованому вигляді — у застосунку його немає.
-        </p>
-        <button className="btn" onClick={connect} disabled={busy}>
-          {busy ? 'Відкриваю…' : "Під'єднати Сільпо"}
+    <Screen
+      title="Онбординг"
+      action={
+        <button className="btn" disabled={saving}
+                onClick={() => onDone({ goal, weekly_budget: budget, diets, household_size: household })}>
+          {saving ? 'Зберігаю…' : 'Почати'}
         </button>
-        {error && (
-          <>
-            <p className="muted" style={{ marginTop: 12 }}>{error}</p>
-            <button className="btn secondary" style={{ marginTop: 10 }} onClick={onConnected}>
-              Я вже увійшов
-            </button>
-          </>
-        )}
+      }
+    >
+      <div>
+        <h1>Дай агенту напрямок</h1>
+        <p className="lede">15 секунд — і він сам збере кошик під твою мету.</p>
       </div>
-    </div>
+
+      <div>
+        <div className="label">Головна мета</div>
+        <div className="pills">
+          {GOALS.map((g) => (
+            <button key={g.key} className="pill" aria-pressed={goal === g.key}
+                    onClick={() => setGoal(g.key)}>{g.label}</button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <div className="label">Тижневий бюджет</div>
+        <div className="card">
+          <div className="row" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>
+            <span className="k">Ліміт на тиждень</span>
+            <span className="budget-value">{budget.toLocaleString('uk-UA')} ₴</span>
+          </div>
+          <input className="slider" type="range" min="300" max="4000" step="100"
+                 value={budget} onChange={(e) => setBudget(Number(e.target.value))}
+                 aria-label="Тижневий бюджет" />
+        </div>
+      </div>
+
+      <div>
+        <div className="label">Обмеження в харчуванні</div>
+        <div className="pills">
+          {DIETS.map((d) => (
+            <button key={d.key} className="pill"
+                    aria-pressed={d.key === 'none' ? diets.length === 0 : diets.includes(d.key)}
+                    onClick={() => toggleDiet(d.key)}>{d.label}</button>
+          ))}
+        </div>
+        <p className="muted" style={{ marginTop: 10 }}>
+          Обмеження з вашого профілю Сільпо агент враховує автоматично.
+        </p>
+      </div>
+
+      <div>
+        <div className="label">Людей у домі</div>
+        <div className="pills">
+          {[1, 2, 3, 4].map((n) => (
+            <button key={n} className="pill" aria-pressed={household === n}
+                    onClick={() => setHousehold(n)}>{n}</button>
+          ))}
+        </div>
+      </div>
+    </Screen>
   )
 }

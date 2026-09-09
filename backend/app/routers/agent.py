@@ -53,6 +53,50 @@ async def _profile(user_id: str) -> dict[str, Any]:
     }
 
 
+@router.get("/agent/context")
+async def context(user_id: str = Depends(current_user_id)) -> dict[str, Any]:
+    """Факти для стартового екрана: скільки чеків, витрати, економія.
+
+    Свідомо не показуємо «потенційну економію» — реальна відома лише після
+    того, як агент зібрав кошик, і вигадувати її не можна.
+    """
+    profile = await _profile(user_id)
+    cached = jobs.get_cached("agent_context", user_id)
+    if cached is not None:
+        return {**cached, "profile": profile}
+
+    async def _factory() -> dict[str, Any]:
+        from app.nutrition import categories as cats
+        from app.services.habits import fetch_offline_orders
+
+        async with silpo(user_id) as api:
+            ctx, _c, _m = await fetch_cart(api)
+            if ctx is None:
+                return {"stats": None}
+            orders = await fetch_offline_orders(api, ctx)
+
+        if not orders:
+            return {"stats": None}
+        lines = [line for order in orders for line in order.items]
+        structure = cats.analyse(lines, profile.get("goal"))
+        problem = next((c for c in structure.categories if c.status == "above"), None)
+        days = max((orders[0].created_at - orders[-1].created_at).days, 1) if len(orders) > 1 else 1
+        return {
+            "stats": {
+                "receipts": len(orders),
+                "period_days": days,
+                "total_spend": round(sum(o.total for o in orders), 2),
+                "saved": round(sum(o.discount for o in orders), 2),
+                "top_category": (
+                    {"label": problem.label, "share": problem.share} if problem else None
+                ),
+            }
+        }
+
+    result = await jobs.cached_or_start("agent_context", user_id, _factory)
+    return {**result, "profile": profile}
+
+
 @router.post("/agent/run")
 async def run_agent(
     params: RunIn | None = None, user_id: str = Depends(current_user_id)
@@ -63,6 +107,7 @@ async def run_agent(
     profile = await _profile(user_id)
 
     jobs.invalidate("agent", user_id)
+    runner.reset_progress(user_id)
 
     async def _factory() -> dict[str, Any]:
         result = await runner.run(user_id, prompt, profile)
@@ -78,10 +123,12 @@ async def agent_status(user_id: str = Depends(current_user_id)) -> dict[str, Any
     cached = jobs.get_cached("agent", user_id)
     if cached is not None:
         return {**cached, "building": jobs.is_running("agent", user_id)}
+    # Поки агент працює — віддаємо кроки, які вже виконано
     return {
         "building": jobs.is_running("agent", user_id),
         "error": jobs.last_error("agent", user_id),
-        "steps": [], "draft": [], "summary": {},
+        "steps": runner.live_steps(user_id),
+        "draft": [], "summary": {},
     }
 
 
