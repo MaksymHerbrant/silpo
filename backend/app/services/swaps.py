@@ -101,9 +101,10 @@ async def apply_swap(user_id: str, swap_id: str) -> dict[str, Any]:
                     "quantity": quantity,
                 }],
             })
+            # Перевірено наживо: tool очікує products: [{productId}], не productIds
             removed = await api.call(T.REMOVE_CART_PRODUCTS, {
                 "shoppingCartId": ctx.cart_id,
-                "productIds": [swap["original_product_id"]],
+                "products": [{"productId": swap["original_product_id"]}],
             })
             await repo.mark_swap(swap_id, accepted=True)
             return {"applied": True, "mode": "cart", "cart_id": ctx.cart_id,
