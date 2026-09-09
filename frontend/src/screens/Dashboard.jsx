@@ -5,7 +5,8 @@ import Screen from '../components/Screen'
  * Кожна картка клікабельна й відкриває деталізацію.
  */
 const FINDING_ICON = {
-  safety: '🛡️', promo: '🏷️', health: '🥗', alternative: '🔄', noise: '🧹', usual: '🛒',
+  safety: '⛔', preference: '🎯', promo: '🏷️', health: '🥗',
+  alternative: '🔄', noise: '🧹', usual: '🛒',
 }
 
 export default function Dashboard({ plan, building, onOpenCard, onOpenItem, onOpenPlan, onRefresh }) {

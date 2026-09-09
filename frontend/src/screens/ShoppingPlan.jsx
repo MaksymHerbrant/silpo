@@ -44,8 +44,15 @@ export default function ShoppingPlan({
         </p>
       </div>
 
-      <div className="plan-list">
-        {items.map((i) => {
+      {['weekly', 'biweekly', 'monthly'].map((cadence) => {
+        const group = items.filter((i) => (i.cadence || 'weekly') === cadence)
+        if (!group.length) return null
+        const label = { weekly: 'Щотижня', biweekly: 'Раз на два тижні', monthly: 'Раз на місяць' }[cadence]
+        return (
+          <div key={cadence}>
+            <div className="group-title">{label}</div>
+            <div className="plan-list">
+              {group.map((i) => {
           const state = chosen[i.slug] || {}
           const alt = i.alternative
           const useAlt = state.useAlternative && alt
@@ -81,6 +88,9 @@ export default function ShoppingPlan({
                 {i.note && !useAlt && (
                   <div className={`plan-note${i.action === 'blocked' ? ' warn' : ''}`}>{i.note}</div>
                 )}
+                {i.cadence !== 'weekly' && (
+                  <div className="plan-meta"><span>{i.cadence_label} · не щотижнева витрата</span></div>
+                )}
 
                 {alt && (
                   <button
@@ -101,10 +111,13 @@ export default function ShoppingPlan({
                   </button>
                 )}
               </div>
+                  </div>
+                )
+              })}
             </div>
-          )
-        })}
-      </div>
+          </div>
+        )
+      })}
 
       <div className="summary">
         <div className="row" style={{ borderTop: 'none', marginTop: 0, paddingTop: 0 }}>

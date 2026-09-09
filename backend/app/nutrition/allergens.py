@@ -22,12 +22,55 @@ from dataclasses import dataclass
 
 NO_RESTRICTION_SLUGS = {"all-food", "all_food", "none", ""}
 
+# Два принципово різні типи обмежень — і поводимось із ними по-різному.
+#
+# ALLERGEN — питання безпеки. Діє глобально: якщо в складі є молоко, а гість
+# не переносить лактозу, товар блокується незалежно від категорії.
+#
+# PREFERENCE — дієтичне вподобання. Діє КОНТЕКСТНО, лише в категоріях явного
+# джерела. «Без цукру» не має вирізати хліб, молочку й соуси, де цукор —
+# технологічний компонент: гість отримає напівпорожній кошик і закриє застосунок.
+# Тому таке обмеження працює там, де цукор є суттю продукту: солодкі напої,
+# солодощі й снеки. У решті категорій — м'яка позначка, без блокування.
+KIND_ALLERGEN = "allergen"
+KIND_PREFERENCE = "preference"
+
+RESTRICTION_KIND: dict[str, str] = {
+    "sugar": KIND_PREFERENCE,
+    "alcohol": KIND_PREFERENCE,
+    "vegetarian": KIND_PREFERENCE,
+    "vegan": KIND_PREFERENCE,
+    "halal": KIND_PREFERENCE,
+    "meat": KIND_PREFERENCE,
+    "pork": KIND_PREFERENCE,
+}
+
+# Категорії, у яких вподобання діє жорстко (див. nutrition/categories.py)
+PREFERENCE_SCOPE: dict[str, set[str]] = {
+    "sugar": {"sweet_drinks", "ultra_processed"},
+    "alcohol": {"alcohol"},
+    "vegetarian": {"protein"},
+    "vegan": {"protein", "dairy"},
+    "halal": {"protein"},
+    "meat": {"protein"},
+    "pork": {"protein"},
+}
+
 
 @dataclass(frozen=True)
 class Restriction:
     slug: str
     label: str           # як показати користувачу
     triggers: tuple[str, ...]   # підрядки для пошуку у складі (нижній регістр)
+
+    @property
+    def kind(self) -> str:
+        return RESTRICTION_KIND.get(self.slug, KIND_ALLERGEN)
+
+    @property
+    def scope(self) -> set[str] | None:
+        """Категорії, у яких обмеження діє жорстко. None = скрізь."""
+        return PREFERENCE_SCOPE.get(self.slug) if self.kind == KIND_PREFERENCE else None
 
 
 # slug із профілю Сільпо -> людська назва + тригери у складі
@@ -62,6 +105,9 @@ class AllergenHit:
     restriction: str
     matched_text: str
     severity: str          # high — прямо в переліку алергенів; medium — у складі
+    kind: str = KIND_ALLERGEN
+    action: str = "block"  # block — прибрати; swap — запропонувати заміну; info — просто позначка
+    slug: str = ""
 
 
 def parse_restrictions(payload) -> list[Restriction]:
@@ -82,9 +128,17 @@ def parse_restrictions(payload) -> list[Restriction]:
 
 
 def check_product(product, restrictions: list[Restriction]) -> list[AllergenHit]:
-    """product — ProductInfo. Повертає збіги обмежень зі складом товару."""
+    """Збіги обмежень зі складом товару з урахуванням категорії.
+
+    Алерген знайдено — блокуємо. Вподобання в профільній категорії —
+    пропонуємо заміну. Вподобання поза нею — лише інформуємо.
+    """
     if not restrictions:
         return []
+
+    from app.nutrition.categories import categorize
+
+    category = categorize(product.title)
 
     hits: list[AllergenHit] = []
     sources = [
@@ -103,6 +157,16 @@ def check_product(product, restrictions: list[Restriction]) -> list[AllergenHit]
                 continue
             idx = low.find(found)
             snippet = re.sub(r"\s+", " ", text[max(0, idx - 25): idx + 45]).strip()
+
+            if restriction.kind == KIND_ALLERGEN:
+                action = "block"
+            elif restriction.scope and category in restriction.scope:
+                action = "swap"
+            else:
+                # Цукор у хлібі чи молочці — технологічний компонент,
+                # а не суть продукту. Позначаємо, але не блокуємо.
+                action = "info"
+
             hits.append(
                 AllergenHit(
                     product_id=product_id,
@@ -110,7 +174,18 @@ def check_product(product, restrictions: list[Restriction]) -> list[AllergenHit]
                     restriction=restriction.label,
                     matched_text=snippet,
                     severity=severity,
+                    kind=restriction.kind,
+                    action=action,
+                    slug=restriction.slug,
                 )
             )
             break
     return hits
+
+
+def blocking(hits: list[AllergenHit]) -> list[AllergenHit]:
+    return [h for h in hits if h.action == "block"]
+
+
+def swap_worthy(hits: list[AllergenHit]) -> list[AllergenHit]:
+    return [h for h in hits if h.action == "swap"]

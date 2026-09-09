@@ -16,15 +16,39 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen }) {
         }} />
       )}
 
-      <div className={`verdict ${item.allergen_hits?.length ? 'bad' : 'ok'}`}>
-        <b>{item.allergen_hits?.length ? '⛔ ' : '✓ '}</b>
-        {d.allergen_check}
-        {item.allergen_hits?.map((h, i) => (
-          <div key={i} style={{ marginTop: 6 }}>
-            <b>{h.restriction}</b> — знайдено у складі: …{h.matched}…
+      {(() => {
+        const hits = item.allergen_hits || []
+        const blocking = hits.filter((h) => h.action === 'block')
+        const swaps = hits.filter((h) => h.action === 'swap')
+        const infos = hits.filter((h) => h.action === 'info')
+        const tone = blocking.length ? 'bad' : 'ok'
+        return (
+          <div className={`verdict ${tone}`}>
+            <b>{blocking.length ? '⛔ ' : swaps.length ? '🎯 ' : '✓ '}</b>
+            {blocking.length
+              ? 'У складі знайдено ваш алерген'
+              : swaps.length
+                ? 'Є чистіший варіант під ваше вподобання'
+                : d.allergen_check}
+            {blocking.map((h, i) => (
+              <div key={`b${i}`} style={{ marginTop: 6 }}>
+                <b>{h.restriction}</b> — у складі: …{h.matched}…
+              </div>
+            ))}
+            {swaps.map((h, i) => (
+              <div key={`s${i}`} style={{ marginTop: 6 }}>
+                <b>{h.restriction}</b> — у профілі вказано уникати в цій категорії
+              </div>
+            ))}
+            {infos.length > 0 && (
+              <div style={{ marginTop: 6, opacity: .75 }}>
+                {infos.map((h) => h.restriction).join(', ')} — присутнє як технологічний
+                компонент, не блокуємо
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        )
+      })()}
 
       <div className="card plain">
         <h3 style={{ marginBottom: 8 }}>Чому в кошику</h3>

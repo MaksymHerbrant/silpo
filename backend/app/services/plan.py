@@ -38,6 +38,22 @@ MAX_ALTERNATIVE_LOOKUPS = 3
 MAX_CANDIDATES = 4
 MIN_SAVING = 5.0            # менша різниця в ціні не варта уваги гостя
 MAX_PRICE_RATIO = 1.15      # альтернатива не може бути помітно дорожчою
+
+# Товар із довгим циклом не потрібен щотижня. Туалетний папір і джин у
+# тижневому кошику виглядають абсурдно — тому позначаємо ритм покупки
+# і групуємо список, а не робимо вигляд, що це щотижневі витрати.
+CADENCE_BY_CYCLE = (
+    (10, "weekly", "щотижня"),
+    (20, "biweekly", "раз на два тижні"),
+    (10 ** 6, "monthly", "раз на місяць"),
+)
+
+
+def cadence_for(cycle_days: int) -> tuple[str, str]:
+    for limit, key, label in CADENCE_BY_CYCLE:
+        if cycle_days <= limit:
+            return key, label
+    return "monthly", "раз на місяць"
 MIN_PRICE_RATIO = 0.5       # удвічі дешевше — це вже інший формат товару
 MAX_WEIGHT_RATIO = 2.5      # і за вагою упаковки не має відрізнятись у рази
 
@@ -63,6 +79,9 @@ class PlanItem:
     note: str = ""
     kind: str = "regular"           # regular | companion
     kind_reason: str = ""
+    cadence: str = "weekly"         # weekly | biweekly | monthly
+    cadence_label: str = ""
+    cycle_days: int = 7
     allergen_hits: list[dict[str, Any]] = field(default_factory=list)
     detail: dict[str, Any] = field(default_factory=dict)
     saved: float = 0.0
@@ -82,6 +101,8 @@ class PlanItem:
             "selected": self.selected,
             "line_total": round(self.price * self.quantity, 2),
             "kind": self.kind, "kind_reason": self.kind_reason,
+            "cadence": self.cadence, "cadence_label": self.cadence_label,
+            "cycle_days": self.cycle_days,
             "allergen_hits": self.allergen_hits,
             "detail": self.detail,
         }
@@ -213,8 +234,11 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     guest = await profile_service.load(api)
     restrictions = guest.get("restriction_objects") or []
 
+    period_days = (
+        max((orders[0].created_at - orders[-1].created_at).days, 1) if len(orders) > 1 else 7
+    )
     rows = _aggregate(orders)
-    split = noise_filter.split(rows, receipts=len(orders))
+    split = noise_filter.split(rows, receipts=len(orders), period_days=period_days)
     if not split["basket"]:
         return {"has_data": False, "reason": "У чеках немає товарів, які повторюються"}
 
@@ -235,26 +259,40 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         product = parse_product(payload, fallback_slug=row["slug"], fallback_title=row["name"] or "")
         products[row["slug"]] = product
 
-        per_week = max(round(row["total_qty"] / weeks), 1)
+        cycle_days = int(row.get("cycle_days") or 7)
+        cadence, cadence_label = cadence_for(cycle_days)
+        # Кількість рахуємо на ЦИКЛ товару, а не завжди на тиждень
+        cycles = max(period_days / cycle_days, 1)
+        per_cycle = max(round(row["total_qty"] / cycles), 1)
         item = PlanItem(
             slug=product.slug, product_id=product.product_id, name=product.title,
             image=product.image or row.get("image"), price=product.price or 0,
-            quantity=per_week, category=cats.categorize(product.title),
+            quantity=per_cycle, category=cats.categorize(product.title),
             times_bought=row["times"], kind=row["kind"], kind_reason=row["kind_reason"],
+            cadence=cadence, cadence_label=cadence_label, cycle_days=cycle_days,
             on_promotion=product.on_promotion, old_price=product.old_price,
             saved=product.discount,
         )
 
-        # --- перевірка на алергени з профілю ---
+        # --- перевірка за профілем: алерген блокує, вподобання пропонує заміну ---
         hits = al.check_product(product, restrictions)
         if hits:
             item.allergen_hits = [
-                {"restriction": h.restriction, "matched": h.matched_text, "severity": h.severity}
+                {
+                    "restriction": h.restriction, "matched": h.matched_text,
+                    "severity": h.severity, "kind": h.kind, "action": h.action,
+                }
                 for h in hits
             ]
-            item.action = ACTION_BLOCKED
-            item.selected = False
-            item.note = f"конфлікт з обмеженням: {hits[0].restriction.lower()}"
+            blocking_hits = al.blocking(hits)
+            swap_hits = al.swap_worthy(hits)
+            if blocking_hits:
+                item.action = ACTION_BLOCKED
+                item.selected = False
+                item.note = f"алерген у складі: {blocking_hits[0].restriction.lower()}"
+            elif swap_hits:
+                # Не блокуємо: гість сам вирішить, чи міняти
+                item.note = f"у профілі: без «{swap_hits[0].restriction.lower()}»"
 
         item.detail = {
             "history": row["history"][:10],
@@ -281,6 +319,11 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
 
     # --- 🛡️ безпечні аналоги для заблокованих позицій ---
     blocked = [p for p in plan if p.action == ACTION_BLOCKED]
+    preference_swaps = [
+        p for p in plan
+        if p.action != ACTION_BLOCKED
+        and any(h.get("action") == "swap" for h in p.allergen_hits)
+    ]
     for row in blocked:
         product = products.get(row.slug)
         if product is None:
@@ -288,7 +331,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         alternatives = await _find_alternatives(api, ctx, product, [product.title])
         safe = None
         for candidate, saving in alternatives:
-            if not al.check_product(candidate, restrictions):
+            if not al.blocking(al.check_product(candidate, restrictions)):
                 safe = (candidate, saving)
                 break
         if safe:
@@ -303,10 +346,46 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         found = sum(1 for b in blocked if b.alternative)
         findings.append(Finding(
             kind="safety",
-            title=f"{len(blocked)} позиції не проходять за профілем",
+            title=f"{len(blocked)} позиції з вашим алергеном",
             value=f"{found} безпечні заміни" if found else "перевірте склад",
-            detail="Склад конфліктує з обмеженнями, які ви вказали в Сільпо",
+            detail="У складі знайдено те, що ви вказали в профілі Сільпо як алерген",
             slugs=[b.slug for b in blocked],
+        ))
+
+    # --- 🎯 заміни за вподобанням із профілю (цукор у солодких напоях тощо) ---
+    for row in preference_swaps:
+        product = products.get(row.slug)
+        if product is None or row.alternative:
+            continue
+        rule = match_rule(product)
+        queries = rule.queries if rule else [product.title]
+        alternatives = await _find_alternatives(api, ctx, product, queries)
+        clean = [
+            (c, s_)
+            for c, s_ in alternatives
+            if not al.check_product(c, restrictions)
+        ]
+        if not clean:
+            continue
+        best, saving = max(clean, key=lambda x: x[1])
+        row.action = ACTION_SWITCH
+        row.alternative = {
+            "slug": best.slug, "product_id": best.product_id, "name": best.title,
+            "price": best.price, "image": best.image, "saved": saving,
+            "on_promotion": best.on_promotion,
+            "why": f"відповідає вашому «{row.allergen_hits[0]['restriction'].lower()}»",
+        }
+    matched_swaps = [p for p in preference_swaps if p.alternative]
+    if matched_swaps:
+        findings.append(Finding(
+            kind="preference",
+            title=f"{len(matched_swaps)} позиції під ваші вподобання",
+            value="є чисті варіанти",
+            detail=(
+                "Обмеження з профілю діє в категоріях, де це суть продукту — "
+                "напої та солодощі. Хліб і молочку не чіпаємо."
+            ),
+            slugs=[p.slug for p in matched_swaps],
         ))
 
     # --- 💰 акції на те, що гість і так бере ---
@@ -325,7 +404,9 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         ))
 
     # --- 🥗 одна конкретна зміна на краще ---
-    health = _health_candidate([p.as_dict() for p in plan if p.action != ACTION_BLOCKED], products)
+    health = _health_candidate(
+        [p.as_dict() for p in plan if p.action == ACTION_KEEP and not p.alternative], products
+    )
     health_slug: str | None = None
     if health:
         _weight, product, rule, _item = health
@@ -407,6 +488,8 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
 
     active = [p for p in plan if p.action != ACTION_BLOCKED]
     total_price = sum(p.price * p.quantity for p in active)
+    weekly_price = sum(p.price * p.quantity for p in active if p.cadence == "weekly")
+    periodic_price = total_price - weekly_price
 
     return {
         "has_data": True,
@@ -425,10 +508,13 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             "items": len(active),
             "blocked": len(blocked),
             "total_price": round(total_price, 2),
+            "weekly_price": round(weekly_price, 2),
+            "periodic_price": round(periodic_price, 2),
             "promo_savings": round(sum(p.saved * p.quantity for p in promos), 2),
             "alternative_savings": round(
                 sum((r.alternative or {}).get("saved", 0) * r.quantity for r in cheaper), 2
             ),
+            "preference_swaps": len(matched_swaps),
             "filtered_count": split["filtered_count"],
             "filtered_spend": split["filtered_spend"],
             "based_on_weeks": round(weeks, 1),
