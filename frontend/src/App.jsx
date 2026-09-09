@@ -3,7 +3,9 @@ import { api, login } from './lib/api'
 import { initTelegram, notify, WebApp } from './lib/telegram'
 import Checkout from './screens/Checkout'
 import Done from './screens/Done'
-import Home from './screens/Home'
+import CardDetail from './screens/CardDetail'
+import Dashboard from './screens/Dashboard'
+import ItemDetail from './screens/ItemDetail'
 import Insights from './screens/Insights'
 import ShoppingPlan from './screens/ShoppingPlan'
 import SilpoConnect from './screens/SilpoConnect'
@@ -20,6 +22,7 @@ export default function App() {
   const [chosen, setChosen] = useState({})
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(null)
+  const [sheet, setSheet] = useState(null)   // {type:'card'|'item', key}
   const poll = useRef(null)
 
   useEffect(() => { initTelegram() }, [])
@@ -35,7 +38,14 @@ export default function App() {
         if (!data.building) {
           clearInterval(poll.current)
           setChosen(Object.fromEntries(
-            (data.items || []).map((i) => [i.slug, { selected: i.selected, useAlternative: false }]),
+            (data.items || []).map((i) => [
+              i.slug,
+              {
+                selected: i.selected,
+                // Заблоковану позицію одразу показуємо з безпечною заміною
+                useAlternative: i.action === 'blocked' && Boolean(i.alternative),
+              },
+            ]),
           ))
         }
       } catch { /* мережа моргнула — наступна спроба */ }
@@ -123,8 +133,11 @@ export default function App() {
 
   if (screen === 'insights') return <Insights data={insights} onBack={() => setScreen('home')} />
 
+  const openItemFromPlan = (slug) => setSheet({ type: 'item', key: slug })
+
   if (screen === 'plan') {
     return (
+      <>
       <ShoppingPlan
         plan={plan}
         chosen={chosen}
@@ -134,9 +147,21 @@ export default function App() {
         onSwitch={(slug) => setChosen((c) => ({
           ...c, [slug]: { ...c[slug], useAlternative: !c[slug]?.useAlternative },
         }))}
+        onOpenItem={openItemFromPlan}
         onBack={() => setScreen('home')}
         onNext={() => setScreen('checkout')}
       />
+      {sheet?.type === 'item' && (
+        <ItemDetail
+          item={(plan?.items || []).find((i) => i.slug === sheet.key)}
+          chosen={chosen[sheet.key]}
+          onSwitch={(slug) => setChosen((c) => ({
+            ...c, [slug]: { ...c[slug], selected: true, useAlternative: !c[slug]?.useAlternative },
+          }))}
+          onClose={() => setSheet(null)}
+        />
+      )}
+      </>
     )
   }
 
@@ -165,13 +190,37 @@ export default function App() {
     )
   }
 
+  const openItem = (slug) => setSheet({ type: 'item', key: slug })
+  const switchAlt = (slug) => setChosen((c) => ({
+    ...c, [slug]: { ...c[slug], selected: true, useAlternative: !c[slug]?.useAlternative },
+  }))
+
   return (
-    <Home
-      plan={plan}
-      building={plan?.building}
-      onOpenPlan={() => setScreen('plan')}
-      onOpenInsights={() => setScreen('insights')}
-      onRefresh={() => loadPlan(true)}
-    />
+    <>
+      <Dashboard
+        plan={plan}
+        building={plan?.building}
+        onOpenCard={(kind) => setSheet({ type: 'card', key: kind })}
+        onOpenItem={openItem}
+        onOpenPlan={() => setScreen('plan')}
+        onRefresh={() => loadPlan(true)}
+      />
+      {sheet?.type === 'card' && (
+        <CardDetail
+          kind={sheet.key}
+          plan={plan}
+          onClose={() => setSheet(null)}
+          onOpenItem={openItem}
+        />
+      )}
+      {sheet?.type === 'item' && (
+        <ItemDetail
+          item={(plan?.items || []).find((i) => i.slug === sheet.key)}
+          chosen={chosen[sheet.key]}
+          onSwitch={switchAlt}
+          onClose={() => setSheet(null)}
+        />
+      )}
+    </>
   )
 }

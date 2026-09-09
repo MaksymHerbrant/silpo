@@ -9,10 +9,11 @@ const ACTION_LABEL = {
   switch: { text: 'Замінити', tone: 'good' },
   add: { text: 'Акція', tone: 'money' },
   review: { text: 'Є дешевше', tone: 'money' },
+  blocked: { text: 'Не за профілем', tone: 'warn' },
 }
 
 export default function ShoppingPlan({
-  plan, chosen, onToggle, onSwitch, onNext, onBack,
+  plan, chosen, onToggle, onSwitch, onOpenItem, onNext, onBack,
 }) {
   const items = plan?.items || []
   const selected = items.filter((i) => chosen[i.slug]?.selected)
@@ -61,7 +62,9 @@ export default function ShoppingPlan({
 
               <div className="plan-body">
                 <div className="plan-top">
-                  <span className="plan-name">{useAlt ? alt.name : i.name}</span>
+                  <button className="plan-name link" onClick={() => onOpenItem(i.slug)}>
+                    {useAlt ? alt.name : i.name}
+                  </button>
                   <span className="plan-price">
                     {Math.round((useAlt ? alt.price : i.price) * i.quantity)} ₴
                   </span>
@@ -75,7 +78,9 @@ export default function ShoppingPlan({
                   )}
                 </div>
 
-                {i.note && !useAlt && <div className="plan-note">{i.note}</div>}
+                {i.note && !useAlt && (
+                  <div className={`plan-note${i.action === 'blocked' ? ' warn' : ''}`}>{i.note}</div>
+                )}
 
                 {alt && (
                   <button

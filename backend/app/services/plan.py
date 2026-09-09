@@ -20,16 +20,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.mcp import tools as T
+from app.nutrition import allergens as al
 from app.nutrition import categories as cats
 from app.nutrition.parser import ProductInfo, parse_product
 from app.nutrition.rules import match_rule
-from app.services import insights
+from app.services import noise as noise_filter
+from app.services import profile as profile_service
 
 # Дії, які гість може прийняти щодо позиції свого звичного набору
 ACTION_KEEP = "keep"        # лишити як є
 ACTION_SWITCH = "switch"    # замінити на знайдену альтернативу
 ACTION_ADD = "add"          # докупити (акція на те, що зазвичай береш)
 ACTION_REVIEW = "review"    # варте уваги: подорожчало або є вигідніший аналог
+ACTION_BLOCKED = "blocked"  # конфліктує з обмеженнями гостя — не пропонуємо
 
 MAX_ALTERNATIVE_LOOKUPS = 3
 MAX_CANDIDATES = 4
@@ -58,6 +61,10 @@ class PlanItem:
     times_bought: int
     action: str = ACTION_KEEP
     note: str = ""
+    kind: str = "regular"           # regular | companion
+    kind_reason: str = ""
+    allergen_hits: list[dict[str, Any]] = field(default_factory=list)
+    detail: dict[str, Any] = field(default_factory=dict)
     saved: float = 0.0
     on_promotion: bool = False
     old_price: float | None = None
@@ -74,6 +81,9 @@ class PlanItem:
             "old_price": self.old_price, "alternative": self.alternative,
             "selected": self.selected,
             "line_total": round(self.price * self.quantity, 2),
+            "kind": self.kind, "kind_reason": self.kind_reason,
+            "allergen_hits": self.allergen_hits,
+            "detail": self.detail,
         }
 
 
@@ -171,39 +181,136 @@ def _health_candidate(items: list[dict[str, Any]], products: dict[str, ProductIn
     return best
 
 
-async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dict[str, Any]:
-    """Складає план наступної покупки зі знахідками."""
-    usual = await insights.usual_basket(api, ctx, orders)
-    raw_items = usual.get("items") or []
-    if not raw_items:
-        return {"has_data": False, "reason": usual.get("reason", "Замало чеків для плану")}
+def _aggregate(orders) -> list[dict[str, Any]]:
+    """Зводить чеки до агрегатів по товарах: скільки разів, на скільки грошей."""
+    rows: dict[str, dict[str, Any]] = {}
+    for order in orders:
+        for line in order.items:
+            slug = line.get("slug")
+            if not slug:
+                continue
+            row = rows.setdefault(slug, {
+                "slug": slug, "name": line.get("name"), "times": 0, "total_qty": 0.0,
+                "spend": 0.0, "image": line.get("image"), "history": [],
+            })
+            qty = float(line.get("quantity") or 1)
+            price = float(line.get("price") or 0)
+            row["times"] += 1
+            row["total_qty"] += qty
+            row["spend"] += price * qty
+            row["history"].append({
+                "date": order.created_at.date().isoformat(),
+                "price": price, "quantity": qty, "branch": order.branch,
+            })
+    return list(rows.values())
 
-    # Деталі вже підтягнуті всередині usual_basket — перечитуємо лише те,
-    # що знадобиться для правил заміни.
+
+async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dict[str, Any]:
+    """Складає план наступної покупки: профіль, фільтр шуму, знахідки."""
+    if not orders:
+        return {"has_data": False, "reason": "Чеків Сільпо поки не знайшли"}
+
+    guest = await profile_service.load(api)
+    restrictions = guest.get("restriction_objects") or []
+
+    rows = _aggregate(orders)
+    split = noise_filter.split(rows, receipts=len(orders))
+    if not split["basket"]:
+        return {"has_data": False, "reason": "У чеках немає товарів, які повторюються"}
+
+    weeks = max(
+        ((orders[0].created_at - orders[-1].created_at).days or 7) / 7, 1
+    )
+
+    # --- деталі товарів набору: ціна зараз, склад, алергени ---
+    plan: list[PlanItem] = []
     products: dict[str, ProductInfo] = {}
-    for item in raw_items[:12]:
+    for row in split["basket"][:14]:
         try:
-            payload = await api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(item["slug"]))
+            payload = await api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(row["slug"]))
         except Exception:  # noqa: BLE001
             continue
-        if not T.is_mcp_error(payload):
-            products[item["slug"]] = parse_product(payload, fallback_slug=item["slug"])
+        if T.is_mcp_error(payload):
+            continue
+        product = parse_product(payload, fallback_slug=row["slug"], fallback_title=row["name"] or "")
+        products[row["slug"]] = product
 
-    plan: list[PlanItem] = []
-    for item in raw_items:
-        plan.append(PlanItem(
-            slug=item["slug"], product_id=item["product_id"], name=item["name"],
-            image=item.get("image"), price=item.get("price") or 0,
-            quantity=item.get("quantity", 1), category=item.get("category", "other"),
-            times_bought=item.get("times_bought", 1),
-            on_promotion=item.get("on_promotion", False),
-            old_price=item.get("old_price"), saved=item.get("saved") or 0,
-        ))
+        per_week = max(round(row["total_qty"] / weeks), 1)
+        item = PlanItem(
+            slug=product.slug, product_id=product.product_id, name=product.title,
+            image=product.image or row.get("image"), price=product.price or 0,
+            quantity=per_week, category=cats.categorize(product.title),
+            times_bought=row["times"], kind=row["kind"], kind_reason=row["kind_reason"],
+            on_promotion=product.on_promotion, old_price=product.old_price,
+            saved=product.discount,
+        )
+
+        # --- перевірка на алергени з профілю ---
+        hits = al.check_product(product, restrictions)
+        if hits:
+            item.allergen_hits = [
+                {"restriction": h.restriction, "matched": h.matched_text, "severity": h.severity}
+                for h in hits
+            ]
+            item.action = ACTION_BLOCKED
+            item.selected = False
+            item.note = f"конфлікт з обмеженням: {hits[0].restriction.lower()}"
+
+        item.detail = {
+            "history": row["history"][:10],
+            "times_bought": row["times"],
+            "total_spend": round(row["spend"], 2),
+            "avg_price": round(row["spend"] / max(row["total_qty"], 1), 2),
+            "why": row["kind_reason"],
+            "ingredients": product.ingredients,
+            "allergens_text": product.allergens_text,
+            "brand": product.brand,
+            "country": product.country,
+            "nutrition": {
+                "kcal": product.nutrition.energy_kcal, "protein": product.nutrition.protein,
+                "fat": product.nutrition.fat, "carbs": product.nutrition.carbs,
+            },
+            "allergen_check": (
+                "Конфліктів із вашим профілем не знайдено" if not hits
+                else "Знайдено конфлікт із обмеженнями профілю"
+            ) if restrictions else "Обмеження в профілі не вказані",
+        }
+        plan.append(item)
 
     findings: list[Finding] = []
 
+    # --- 🛡️ безпечні аналоги для заблокованих позицій ---
+    blocked = [p for p in plan if p.action == ACTION_BLOCKED]
+    for row in blocked:
+        product = products.get(row.slug)
+        if product is None:
+            continue
+        alternatives = await _find_alternatives(api, ctx, product, [product.title])
+        safe = None
+        for candidate, saving in alternatives:
+            if not al.check_product(candidate, restrictions):
+                safe = (candidate, saving)
+                break
+        if safe:
+            candidate, saving = safe
+            row.alternative = {
+                "slug": candidate.slug, "product_id": candidate.product_id,
+                "name": candidate.title, "price": candidate.price, "image": candidate.image,
+                "saved": saving, "on_promotion": candidate.on_promotion,
+                "why": "без вашого алергену",
+            }
+    if blocked:
+        found = sum(1 for b in blocked if b.alternative)
+        findings.append(Finding(
+            kind="safety",
+            title=f"{len(blocked)} позиції не проходять за профілем",
+            value=f"{found} безпечні заміни" if found else "перевірте склад",
+            detail="Склад конфліктує з обмеженнями, які ви вказали в Сільпо",
+            slugs=[b.slug for b in blocked],
+        ))
+
     # --- 💰 акції на те, що гість і так бере ---
-    promos = [p for p in plan if p.on_promotion and p.saved > 0]
+    promos = [p for p in plan if p.on_promotion and p.saved > 0 and p.action == ACTION_KEEP]
     for row in promos:
         row.action = ACTION_ADD
         row.note = f"зараз в акції, −{round(row.saved)} ₴"
@@ -218,29 +325,26 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         ))
 
     # --- 🥗 одна конкретна зміна на краще ---
-    health = _health_candidate(
-        [p.as_dict() for p in plan], products
-    )
+    health = _health_candidate([p.as_dict() for p in plan if p.action != ACTION_BLOCKED], products)
     health_slug: str | None = None
     if health:
-        _weight, product, rule, item = health
+        _weight, product, rule, _item = health
         alternatives = await _find_alternatives(api, ctx, product, rule.queries)
-        if alternatives:
-            best, saving = max(alternatives, key=lambda x: x[1])
+        safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]
+        if safe:
+            best, saving = max(safe, key=lambda x: x[1])
             row = next((p for p in plan if p.slug == product.slug), None)
             if row is not None:
                 row.action = ACTION_SWITCH
                 row.alternative = {
                     "slug": best.slug, "product_id": best.product_id, "name": best.title,
                     "price": best.price, "image": best.image, "saved": saving,
-                    "on_promotion": best.on_promotion,
-                    "why": rule.reason,
+                    "on_promotion": best.on_promotion, "why": rule.reason,
                 }
                 row.note = rule.title.lower()
                 health_slug = row.slug
                 price_note = (
-                    f"і на {round(saving)} ₴ дешевше" if saving >= MIN_SAVING
-                    else "за схожою ціною"
+                    f"і на {round(saving)} ₴ дешевше" if saving >= MIN_SAVING else "за схожою ціною"
                 )
                 findings.append(Finding(
                     kind="health",
@@ -253,7 +357,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
                     slugs=[row.slug],
                 ))
 
-    # --- 🔄 вигідніші аналоги для решти ---
+    # --- 🔄 вигідніші аналоги ---
     cheaper: list[PlanItem] = []
     checked = 0
     for row in plan:
@@ -266,9 +370,10 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             continue
         checked += 1
         alternatives = await _find_alternatives(api, ctx, product, [product.title])
-        if not alternatives:
+        safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]
+        if not safe:
             continue
-        best, saving = max(alternatives, key=lambda x: x[1])
+        best, saving = max(safe, key=lambda x: x[1])
         if saving < MIN_SAVING:
             continue
         row.action = ACTION_REVIEW
@@ -290,25 +395,43 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             slugs=[r.slug for r in cheaper],
         ))
 
-    total_price = sum(p.price * p.quantity for p in plan)
-    findings.append(Finding(
-        kind="usual",
-        title="Звичний кошик готовий",
-        value=f"{len(plan)} товарів · {round(total_price)} ₴",
-        detail=f"Зібрано з ваших покупок за {usual.get('based_on_weeks')} тижнів",
-    ))
+    # --- 🧹 звіт про відсіяний шум ---
+    if split["filtered_count"]:
+        findings.append(Finding(
+            kind="noise",
+            title=f"Відсіяно {split['filtered_count']} випадкові позиції",
+            value=f"{round(split['filtered_spend'])} ₴",
+            detail="Разові покупки не входять у звичний набір",
+            slugs=[r["slug"] for r in split["noise"][:8]],
+        ))
+
+    active = [p for p in plan if p.action != ACTION_BLOCKED]
+    total_price = sum(p.price * p.quantity for p in active)
 
     return {
         "has_data": True,
+        "profile": {
+            "name": guest.get("name"),
+            "restrictions": guest.get("restrictions"),
+            "status": profile_service.status_line(guest),
+        },
         "items": [p.as_dict() for p in plan],
         "findings": [f.as_dict() for f in findings],
+        "noise": [
+            {"name": r["name"], "spend": round(r["spend"], 2), "reason": r["kind_reason"]}
+            for r in split["noise"][:10]
+        ],
         "summary": {
-            "items": len(plan),
+            "items": len(active),
+            "blocked": len(blocked),
             "total_price": round(total_price, 2),
             "promo_savings": round(sum(p.saved * p.quantity for p in promos), 2),
             "alternative_savings": round(
                 sum((r.alternative or {}).get("saved", 0) * r.quantity for r in cheaper), 2
             ),
-            "based_on_weeks": usual.get("based_on_weeks"),
+            "filtered_count": split["filtered_count"],
+            "filtered_spend": split["filtered_spend"],
+            "based_on_weeks": round(weeks, 1),
+            "receipts": len(orders),
         },
     }
