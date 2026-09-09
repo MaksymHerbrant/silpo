@@ -1,0 +1,16 @@
+# Секрети — ніколи в репозиторій
+.env
+.env.local
+*.env
+!.env.example
+
+# Залежності та збірки
+**/.venv/
+**/node_modules/
+**/dist/
+__pycache__/
+*.pyc
+
+# Локальне
+.DS_Store
+*.log
