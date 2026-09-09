@@ -162,3 +162,88 @@ h3 { margin: 0; font-size: 15px; font-weight: 700; }
 @keyframes fade { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .fade, .spinner { animation: none; } }
 :focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+/* --- Головний екран: знахідки --- */
+.hero-money {
+  background: var(--green); color: #fff; border-radius: var(--r-card);
+  padding: 20px; text-align: center;
+}
+.hero-money-value { font-size: 34px; font-weight: 800; letter-spacing: -.03em; font-variant-numeric: tabular-nums; }
+.hero-money-label { font-size: 13.5px; opacity: .85; margin-top: 4px; }
+
+.findings { display: flex; flex-direction: column; gap: 10px; }
+.finding {
+  display: flex; gap: 14px; align-items: flex-start; width: 100%; text-align: left;
+  background: var(--surface); border: 1px solid var(--rule); border-radius: var(--r-card);
+  padding: 15px 16px; font-family: inherit; color: var(--ink);
+}
+.finding-ico {
+  flex: none; width: 38px; height: 38px; border-radius: 11px; background: var(--surface-2);
+  display: grid; place-items: center; font-size: 18px;
+}
+.finding-body { flex: 1; min-width: 0; }
+.finding-top { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; }
+.finding-title { font-weight: 700; font-size: 15px; }
+.finding-value { font-weight: 700; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.finding-value.money { color: var(--amber); }
+.finding-detail { display: block; color: var(--ink-3); font-size: 13px; margin-top: 5px; line-height: 1.4; }
+
+.link-row {
+  display: flex; justify-content: space-between; align-items: center; width: 100%;
+  background: none; border: none; border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule); padding: 15px 2px;
+  font-family: inherit; font-size: 14.5px; color: var(--ink); text-align: left;
+}
+.link-row .chev { color: var(--ink-3); font-size: 20px; }
+
+/* --- План покупки --- */
+.plan-list { display: flex; flex-direction: column; }
+.plan-row { display: flex; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--rule); }
+.plan-row.off { opacity: .45; }
+.tick {
+  flex: none; width: 24px; height: 24px; border-radius: 7px; margin-top: 2px;
+  border: 1.5px solid var(--rule); background: var(--surface); color: #fff;
+  font-size: 13px; font-family: inherit; display: grid; place-items: center;
+}
+.tick.on { background: var(--green); border-color: var(--green); }
+.plan-body { flex: 1; min-width: 0; }
+.plan-top { display: flex; justify-content: space-between; gap: 10px; }
+.plan-name { font-weight: 650; font-size: 15px; }
+.plan-price { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.plan-meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; color: var(--ink-3); font-size: 12.5px; margin-top: 3px; }
+.plan-note { color: var(--ink-2); font-size: 13px; margin-top: 5px; }
+.tag { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 6px; background: var(--surface-2); color: var(--ink-2); }
+.tag.money { background: var(--amber-soft); color: var(--amber); }
+.tag.good { background: var(--green-soft); color: var(--green); }
+
+.alt-row {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  margin-top: 9px; padding: 10px 12px; border-radius: 12px;
+  background: var(--surface-2); border: 1px solid transparent;
+  font-family: inherit; font-size: 13px; color: var(--ink-2);
+}
+.alt-row.active { background: var(--green-soft); border-color: var(--green); color: var(--ink); }
+.alt-text { flex: 1; min-width: 0; line-height: 1.4; }
+.alt-text .money { color: var(--amber); }
+.alt-action { flex: none; font-weight: 700; color: var(--green); font-size: 13px; }
+
+/* --- Аналітика --- */
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.stat-tile { background: var(--surface); border-radius: var(--r-card); padding: 14px 16px; box-shadow: var(--shadow); }
+.stat-tile .n { font-size: 22px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.stat-tile .n.money { color: var(--amber); }
+.stat-tile .t { font-size: 12.5px; color: var(--ink-3); margin-top: 2px; line-height: 1.3; }
+
+.bar-item { margin-bottom: 12px; }
+.bar-item:last-child { margin-bottom: 0; }
+.bar-head { display: flex; justify-content: space-between; font-size: 13.5px; margin-bottom: 5px; }
+.bar-head .amt { color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.bar-track { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.bar-track i { display: block; height: 100%; border-radius: 4px; background: var(--green); }
+.bar-track i.warn { background: var(--amber); }
+
+.spark { display: flex; align-items: flex-end; gap: 5px; height: 84px; margin-top: 6px; }
+.spark div { flex: 1; background: var(--green-soft); border-radius: 4px 4px 0 0; position: relative; }
+.spark div i { position: absolute; inset: auto 0 0 0; background: var(--green); border-radius: 4px 4px 0 0; }
+.spark-labels { display: flex; gap: 5px; margin-top: 6px; }
+.spark-labels span { flex: 1; text-align: center; font-size: 10px; color: var(--ink-3); }

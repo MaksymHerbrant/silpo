@@ -48,15 +48,13 @@ export const api = {
   silpoStatus: () => request('/auth/silpo/status'),
   silpoStart: () => request('/auth/silpo/start', { method: 'POST' }),
 
-  getGoals: () => request('/goals'),
-  saveGoals: (payload) => request('/goals', { method: 'POST', body: JSON.stringify(payload) }),
+  plan: (refresh = false) => request(`/plan?refresh=${refresh}`),
+  planToCart: (items) =>
+    request('/plan/cart', { method: 'POST', body: JSON.stringify({ items }), timeoutMs: 90000 }),
+  planToList: (items) =>
+    request('/plan/list', { method: 'POST', body: JSON.stringify({ items }) }),
 
-  agentContext: () => request('/agent/context'),
-  agentStart: (prompt) =>
-    request('/agent/run', { method: 'POST', body: JSON.stringify({ prompt: prompt || null }) }),
-  agentStatus: () => request('/agent/run'),
-  agentApply: () => request('/agent/apply', { method: 'POST', timeoutMs: 90000 }),
-  shoppingList: () => request('/agent/shopping-list'),
+  insights: (refresh = false) => request(`/insights/overview?refresh=${refresh}`),
 
   mcpLog: (limit = 60) => request(`/debug/mcp-log?limit=${limit}`),
 }

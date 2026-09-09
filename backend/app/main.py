@@ -11,7 +11,9 @@ from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db.supabase import db
-from app.routers import agent, auth, bot, cart, debug, swaps, trends, week
+from app.routers import (
+    agent, auth, bot, cart, debug, insights, plan, swaps, trends, week,
+)
 
 logging.basicConfig(level=logging.INFO)
 
@@ -52,6 +54,8 @@ app.include_router(debug.router)
 app.include_router(bot.router)
 app.include_router(week.router)
 app.include_router(agent.router)
+app.include_router(insights.router)
+app.include_router(plan.router)
 
 
 @app.get("/health")

@@ -1,35 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, login } from './lib/api'
 import { initTelegram, notify, WebApp } from './lib/telegram'
-import AgentRun from './screens/AgentRun'
-import AgentStart from './screens/AgentStart'
-import Basket from './screens/Basket'
-import ChooseAction from './screens/ChooseAction'
-import Onboarding from './screens/Onboarding'
-import ShoppingList from './screens/ShoppingList'
+import Checkout from './screens/Checkout'
+import Done from './screens/Done'
+import Home from './screens/Home'
+import Insights from './screens/Insights'
+import ShoppingPlan from './screens/ShoppingPlan'
 import SilpoConnect from './screens/SilpoConnect'
 
-function Loading({ text = 'Вмикаємось…' }) {
-  return <div className="center"><div className="spinner" />{text}</div>
-}
-
 /**
- * Єдиний потік агента з макетів:
- * онбординг → запуск → живий трейс → кошик → вибір дії → результат.
+ * Потік без опитувань: гість заходить — і одразу бачить знахідки.
+ * Історія покупок → знахідки → план → дія (кошик або список).
  */
 export default function App() {
   const [state, setState] = useState({ status: 'boot' })
-  const [screen, setScreen] = useState('start')
-  const [goals, setGoals] = useState(null)
-  const [context, setContext] = useState(null)
-  const [run, setRun] = useState({ steps: [], draft: [], summary: {}, building: false })
-  const [applying, setApplying] = useState(false)
-  const [applyResult, setApplyResult] = useState(null)
-  const [list, setList] = useState(null)
-  const [saving, setSaving] = useState(false)
+  const [screen, setScreen] = useState('home')
+  const [plan, setPlan] = useState(null)
+  const [insights, setInsights] = useState(null)
+  const [chosen, setChosen] = useState({})
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(null)
   const poll = useRef(null)
 
   useEffect(() => { initTelegram() }, [])
+  useEffect(() => () => clearInterval(poll.current), [])
+
+  /** План будується у фоні до хвилини — опитуємо, поки building=true. */
+  const loadPlan = useCallback((refresh = false) => {
+    clearInterval(poll.current)
+    const tick = async () => {
+      try {
+        const data = await api.plan(refresh)
+        setPlan(data)
+        if (!data.building) {
+          clearInterval(poll.current)
+          setChosen(Object.fromEntries(
+            (data.items || []).map((i) => [i.slug, { selected: i.selected, useAlternative: false }]),
+          ))
+        }
+      } catch { /* мережа моргнула — наступна спроба */ }
+    }
+    tick()
+    poll.current = setInterval(tick, 2500)
+  }, [])
 
   const boot = useCallback(async () => {
     try {
@@ -38,81 +51,63 @@ export default function App() {
         setState({ status: 'connect', user: session.user })
         return
       }
-      const goalState = await api.getGoals().catch(() => null)
-      setGoals(goalState)
       setState({ status: 'ready', user: session.user })
-      setScreen(goalState?.configured ? 'start' : 'onboarding')
-      api.agentContext().then(setContext).catch(() => {})
+      loadPlan()
+      api.insights().then(setInsights).catch(() => {})
     } catch (e) {
       setState({ status: 'error', message: e.message })
     }
-  }, [])
+  }, [loadPlan])
 
   useEffect(() => { boot() }, [boot])
 
-  useEffect(() => () => clearInterval(poll.current), [])
+  const selectedItems = (plan?.items || [])
+    .filter((i) => chosen[i.slug]?.selected)
+    .map((i) => {
+      const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
+      return {
+        product_id: alt ? alt.product_id : i.product_id,
+        quantity: i.quantity,
+        name: alt ? alt.name : i.name,
+      }
+    })
 
-  async function saveGoals(payload) {
-    setSaving(true)
-    try {
-      await api.saveGoals(payload)
-      setGoals(await api.getGoals())
-      setScreen('start')
-      api.agentContext().then(setContext).catch(() => {})
-    } catch (e) {
-      WebApp.showAlert?.(`Не вдалось зберегти: ${e.message}`)
-    } finally {
-      setSaving(false)
-    }
-  }
+  const selectedTotal = (plan?.items || [])
+    .filter((i) => chosen[i.slug]?.selected)
+    .reduce((sum, i) => {
+      const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
+      return sum + (alt ? alt.price : i.price) * i.quantity
+    }, 0)
 
-  /** Запускає агента й опитує статус, поки той працює — трейс іде наживо. */
-  async function startAgent() {
-    setRun({ steps: [], draft: [], summary: {}, building: true, error: null })
-    setApplyResult(null)
-    setScreen('running')
+  async function toCart() {
+    setBusy(true)
     try {
-      await api.agentStart()
-    } catch (e) {
-      setRun((r) => ({ ...r, building: false, error: e.message }))
-      return
-    }
-    clearInterval(poll.current)
-    poll.current = setInterval(async () => {
-      try {
-        const data = await api.agentStatus()
-        setRun(data)
-        if (!data.building) {
-          clearInterval(poll.current)
-          if (!data.error) notify('success')
-        }
-      } catch { /* мережа моргнула — наступна спроба за 2 секунди */ }
-    }, 2000)
-  }
-
-  async function applyToCart() {
-    setApplying(true)
-    try {
-      setApplyResult(await api.agentApply())
+      const result = await api.planToCart(selectedItems)
       notify('success')
+      setDone({ mode: 'cart', result })
+      setScreen('done')
     } catch (e) {
       notify('error')
-      WebApp.showAlert?.(`Не вдалось додати: ${e.message}`)
+      WebApp.showAlert?.(`Не вдалось створити кошик: ${e.message}`)
     } finally {
-      setApplying(false)
+      setBusy(false)
     }
   }
 
-  async function openList() {
+  async function toList() {
+    setBusy(true)
     try {
-      setList(await api.shoppingList())
-      setScreen('list')
+      const list = await api.planToList(selectedItems)
+      setDone({ mode: 'list', list })
+      setScreen('done')
     } catch (e) {
       WebApp.showAlert?.(e.message)
+    } finally {
+      setBusy(false)
     }
   }
 
-  if (state.status === 'boot') return <Loading />
+  if (state.status === 'boot') return <div className="center"><div className="spinner" />Вмикаємось…</div>
   if (state.status === 'error') {
     return (
       <div className="center">
@@ -126,52 +121,57 @@ export default function App() {
   }
   if (state.status === 'connect') return <SilpoConnect user={state.user} onConnected={boot} />
 
-  if (screen === 'onboarding') return <Onboarding onDone={saveGoals} saving={saving} />
+  if (screen === 'insights') return <Insights data={insights} onBack={() => setScreen('home')} />
 
-  if (screen === 'running') {
+  if (screen === 'plan') {
     return (
-      <AgentRun
-        steps={run.steps || []}
-        building={run.building}
-        error={run.error}
-        onBack={() => setScreen('start')}
-        onOpenBasket={() => setScreen('basket')}
+      <ShoppingPlan
+        plan={plan}
+        chosen={chosen}
+        onToggle={(slug) => setChosen((c) => ({
+          ...c, [slug]: { ...c[slug], selected: !c[slug]?.selected },
+        }))}
+        onSwitch={(slug) => setChosen((c) => ({
+          ...c, [slug]: { ...c[slug], useAlternative: !c[slug]?.useAlternative },
+        }))}
+        onBack={() => setScreen('home')}
+        onNext={() => setScreen('checkout')}
       />
     )
   }
 
-  if (screen === 'basket') {
+  if (screen === 'checkout') {
     return (
-      <Basket
-        draft={run.draft || []}
-        summary={run.summary || {}}
-        answer={run.answer}
-        onBack={() => setScreen('running')}
-        onNext={() => setScreen('action')}
+      <Checkout
+        count={selectedItems.length}
+        total={selectedTotal}
+        busy={busy}
+        onCart={toCart}
+        onList={toList}
+        onBack={() => setScreen('plan')}
       />
     )
   }
 
-  if (screen === 'action') {
+  if (screen === 'done' && done) {
     return (
-      <ChooseAction
-        applying={applying}
-        result={applyResult}
-        onApply={applyToCart}
-        onList={openList}
-        onBack={() => setScreen('basket')}
+      <Done
+        mode={done.mode}
+        result={done.result}
+        list={done.list}
+        onBack={() => setScreen('plan')}
+        onHome={() => { setScreen('home'); loadPlan(true) }}
       />
     )
   }
-
-  if (screen === 'list') return <ShoppingList list={list} onBack={() => setScreen('action')} />
 
   return (
-    <AgentStart
-      context={context}
-      goalLabel={goals?.targets?.goal_label || context?.profile?.goal_label}
-      running={run.building}
-      onRun={startAgent}
+    <Home
+      plan={plan}
+      building={plan?.building}
+      onOpenPlan={() => setScreen('plan')}
+      onOpenInsights={() => setScreen('insights')}
+      onRefresh={() => loadPlan(true)}
     />
   )
 }

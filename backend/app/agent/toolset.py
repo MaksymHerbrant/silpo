@@ -31,7 +31,8 @@ class AgentSession:
         self.ctx = ctx
         self.profile = profile
         self.products: dict[str, Any] = {}      # slug -> ProductInfo
-        self.draft: list[dict[str, Any]] = []   # чернетка кошика
+        self.draft: list[dict[str, Any]] = []       # те, що гість підтвердив
+        self.proposals: list[dict[str, Any]] = []   # пропозиції на вибір гостя
         self.history_cache: dict[str, Any] | None = None
         self.promo_cache: list[dict[str, Any]] | None = None
 
@@ -147,6 +148,87 @@ class AgentSession:
             "note": scored.note,
         }
 
+    async def propose_swap(
+        self, original_slug: str, options: list[dict[str, Any]], problem: str = ""
+    ) -> dict[str, Any]:
+        """Пропонує гостю варіанти заміни. Нічого не додає — вирішує гість.
+
+        options: [{"slug": "...", "why": "чим кращий"}] — 2-3 варіанти
+        ОДНІЄЇ смакової родини з оригіналом.
+        """
+        original = self.products.get(original_slug)
+        if original is None:
+            detail = await self.inspect_product(original_slug)
+            if detail.get("error"):
+                return detail
+            original = self.products.get(original_slug)
+
+        variants: list[dict[str, Any]] = []
+        for option in list(options)[:3]:
+            slug = option.get("slug")
+            if not slug or slug == original_slug:
+                continue
+            product = self.products.get(slug)
+            if product is None:
+                detail = await self.inspect_product(slug)
+                if detail.get("error"):
+                    continue
+                product = self.products.get(slug)
+            variants.append({
+                "slug": slug, "product_id": product.product_id, "name": product.title,
+                "price": product.price, "old_price": product.old_price,
+                "saved": product.discount, "on_promotion": product.on_promotion,
+                "image": product.image, "why": str(option.get("why", ""))[:160],
+                "price_delta": round((product.price or 0) - (original.price or 0), 2),
+            })
+
+        if not variants:
+            return {"error": "жоден варіант не вдалось перевірити"}
+
+        self.proposals.append({
+            "kind": "swap",
+            "original": {
+                "slug": original_slug, "product_id": original.product_id,
+                "name": original.title, "price": original.price, "image": original.image,
+                "times_bought": self._times_bought(original_slug),
+            },
+            "problem": problem[:160],
+            "options": variants,
+        })
+        return {"proposals": len(self.proposals), "added_options": len(variants)}
+
+    async def propose_addition(self, slug: str, why: str = "") -> dict[str, Any]:
+        """Пропонує ДОДАТИ новий товар. За замовчуванням вимкнено — гість вирішує."""
+        product = self.products.get(slug)
+        if product is None:
+            detail = await self.inspect_product(slug)
+            if detail.get("error"):
+                return detail
+            product = self.products.get(slug)
+        self.proposals.append({
+            "kind": "addition",
+            "original": None,
+            "problem": "",
+            "options": [{
+                "slug": slug, "product_id": product.product_id, "name": product.title,
+                "price": product.price, "old_price": product.old_price,
+                "saved": product.discount, "on_promotion": product.on_promotion,
+                "image": product.image, "why": str(why)[:160], "price_delta": None,
+            }],
+        })
+        return {"proposals": len(self.proposals)}
+
+    def _times_bought(self, slug: str) -> int:
+        history = self.history_cache or {}
+        for row in history.get("top_products", []):
+            if row.get("slug") == slug:
+                return row.get("times", 1)
+        return 1
+
+    async def get_proposals(self) -> dict[str, Any]:
+        """Що вже запропоновано гостю."""
+        return {"count": len(self.proposals), "proposals": self.proposals}
+
     async def add_to_draft(self, slug: str, quantity: int = 1, reason: str = "") -> dict[str, Any]:
         """Кладе товар у ЧЕРНЕТКУ кошика. У Сільпо нічого не пишеться."""
         product = self.products.get(slug)
@@ -256,37 +338,58 @@ def build_tools(session: AgentSession) -> list[ToolSpec]:
             handler=session.inspect_product,
         ),
         ToolSpec(
-            name="add_to_draft",
+            name="propose_swap",
             description=(
-                "Кладе товар у чернетку кошика. У Сільпо НІЧОГО не записується — "
-                "це станеться лише після підтвердження гостем. Повертає підсумок: "
-                "суму, економію, структуру категорій і залишок бюджету."
+                "Пропонує гостю 2-3 варіанти заміни для товару, який він КУПУЄ "
+                "РЕГУЛЯРНО. Нічого не додає в кошик — обирає сам гість. "
+                "Усі варіанти мають бути ОДНІЄЇ смакової родини з оригіналом: "
+                "для солодкої газованої води — версія zero, інша газована без "
+                "цукру або сік; для чіпсів — інший хрусткий снек. "
+                "Вода замість коли — неприйнятна пропозиція."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "original_slug": {"type": "string", "description": "Товар, який гість купує"},
+                    "problem": {"type": "string", "description": "У чому проблема, коротко"},
+                    "options": {
+                        "type": "array",
+                        "description": "2-3 варіанти заміни",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "slug": {"type": "string"},
+                                "why": {"type": "string", "description": "Чим кращий, одне речення"},
+                            },
+                            "required": ["slug"],
+                        },
+                    },
+                },
+                "required": ["original_slug", "options"],
+            },
+            handler=session.propose_swap,
+        ),
+        ToolSpec(
+            name="propose_addition",
+            description=(
+                "Пропонує гостю ДОДАТИ новий товар. Використовуй економно й лише "
+                "коли це справді доречно: гість не просив, щоб його вчили їсти. "
+                "Ніколи не пропонуй банальності на кшталт бананів «бо корисно»."
             ),
             parameters={
                 "type": "object",
                 "properties": {
                     "slug": {"type": "string"},
-                    "quantity": {"type": "integer", "description": "Скільки упаковок"},
-                    "reason": {"type": "string", "description": "Чому цей товар — одне речення"},
+                    "why": {"type": "string", "description": "Нащо це гостю, одне речення"},
                 },
                 "required": ["slug"],
             },
-            handler=session.add_to_draft,
+            handler=session.propose_addition,
         ),
         ToolSpec(
-            name="get_draft",
-            description="Поточна чернетка кошика з підсумками — перевір перед завершенням.",
+            name="get_proposals",
+            description="Що вже запропоновано — перевір перед завершенням.",
             parameters={"type": "object", "properties": {}},
-            handler=session.get_draft,
-        ),
-        ToolSpec(
-            name="remove_from_draft",
-            description="Прибирає товар із чернетки, якщо не влазить у бюджет або не підходить.",
-            parameters={
-                "type": "object",
-                "properties": {"slug": {"type": "string"}},
-                "required": ["slug"],
-            },
-            handler=session.remove_from_draft,
+            handler=session.get_proposals,
         ),
     ]
