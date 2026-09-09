@@ -67,15 +67,17 @@ class GeminiProvider(BaseProvider):
 
     name = "gemini"
     BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+    THINKING_HEADROOM = 1024   # запас токенів на внутрішні роздуми моделі
 
     def __init__(self, api_key: str, model: str) -> None:
         self.api_key = api_key
         self.model = model
 
     async def _post(self, payload: dict[str, Any]) -> dict[str, Any]:
+        # Ключ передаємо заголовком: нові ключі формату AQ.* працюють лише так
         url = f"{self.BASE}/{self.model}:generateContent"
-        async with httpx.AsyncClient(timeout=90.0) as client:
-            r = await client.post(url, params={"key": self.api_key}, json=payload)
+        async with httpx.AsyncClient(timeout=120.0) as client:
+            r = await client.post(url, headers={"x-goog-api-key": self.api_key}, json=payload)
         if r.status_code == 429:
             raise LLMUnavailable("Gemini: вичерпано безкоштовний ліміт запитів")
         if r.status_code >= 400:
@@ -91,7 +93,14 @@ class GeminiProvider(BaseProvider):
         data = await self._post({
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"maxOutputTokens": max_tokens, "temperature": 0.4},
+            "generationConfig": {
+                # Роздуми моделі теж витрачають maxOutputTokens, тому даємо запас
+                # і тримаємо thinkingLevel низьким — нам потрібна швидкість,
+                # а не глибокі міркування над формулюванням.
+                "maxOutputTokens": max_tokens + self.THINKING_HEADROOM,
+                "temperature": 0.4,
+                "thinkingConfig": {"thinkingLevel": "low"},
+            },
         })
         candidates = data.get("candidates") or []
         return self._text_of(candidates[0]) if candidates else ""
@@ -112,7 +121,12 @@ class GeminiProvider(BaseProvider):
                 "systemInstruction": {"parts": [{"text": system}]},
                 "contents": contents,
                 "tools": [{"functionDeclarations": declarations}],
-                "generationConfig": {"maxOutputTokens": 2048, "temperature": 0.3},
+                "generationConfig": {
+                    "maxOutputTokens": 4096,
+                    "temperature": 0.3,
+                    # В агентному циклі роздуми корисні: модель планує кроки.
+                    "thinkingConfig": {"thinkingLevel": "low"},
+                },
             })
             candidates = data.get("candidates") or []
             if not candidates:
