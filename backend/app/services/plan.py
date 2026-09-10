@@ -34,8 +34,13 @@ ACTION_ADD = "add"          # докупити (акція на те, що за�
 ACTION_REVIEW = "review"    # варте уваги: подорожчало або є вигідніший аналог
 ACTION_BLOCKED = "blocked"  # конфліктує з обмеженнями гостя — не пропонуємо
 
-MAX_ALTERNATIVE_LOOKUPS = 3
-MAX_CANDIDATES = 4
+MAX_ALTERNATIVE_LOOKUPS = 2
+MAX_CANDIDATES = 3
+# Загальна стеля на пошуки альтернатив за одну побудову. Кожен пошук — це
+# виклик find_products_batch плюс до трьох get_product_details, тобто
+# найдорожча частина. Без стелі побудова тягнеться понад хвилину і встигає
+# застати обрив зʼєднання.
+MAX_TOTAL_SEARCHES = 5
 MIN_SAVING = 5.0            # менша різниця в ціні не варта уваги гостя
 MAX_PRICE_RATIO = 1.15      # альтернатива не може бути помітно дорожчою
 
@@ -226,8 +231,22 @@ def _aggregate(orders) -> list[dict[str, Any]]:
     return list(rows.values())
 
 
+class SearchBudget:
+    """Простий лічильник: скільки пошуків альтернатив ще можна дозволити."""
+
+    def __init__(self, limit: int = MAX_TOTAL_SEARCHES) -> None:
+        self.left = limit
+
+    def take(self) -> bool:
+        if self.left <= 0:
+            return False
+        self.left -= 1
+        return True
+
+
 async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dict[str, Any]:
     """Складає план наступної покупки: профіль, фільтр шуму, знахідки."""
+    budget = SearchBudget()
     if not orders:
         return {"has_data": False, "reason": "Чеків Сільпо поки не знайшли"}
 
@@ -249,7 +268,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     # --- деталі товарів набору: ціна зараз, склад, алергени ---
     plan: list[PlanItem] = []
     products: dict[str, ProductInfo] = {}
-    for row in split["basket"][:14]:
+    for row in split["basket"][:12]:
         try:
             payload = await api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(row["slug"]))
         except Exception:  # noqa: BLE001
@@ -326,7 +345,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     ]
     for row in blocked:
         product = products.get(row.slug)
-        if product is None:
+        if product is None or not budget.take():
             continue
         alternatives = await _find_alternatives(api, ctx, product, [product.title])
         safe = None
@@ -355,7 +374,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     # --- 🎯 заміни за вподобанням із профілю (цукор у солодких напоях тощо) ---
     for row in preference_swaps:
         product = products.get(row.slug)
-        if product is None or row.alternative:
+        if product is None or row.alternative or not budget.take():
             continue
         rule = match_rule(product)
         queries = rule.queries if rule else [product.title]
@@ -408,7 +427,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         [p.as_dict() for p in plan if p.action == ACTION_KEEP and not p.alternative], products
     )
     health_slug: str | None = None
-    if health:
+    if health and budget.take():
         _weight, product, rule, _item = health
         alternatives = await _find_alternatives(api, ctx, product, rule.queries)
         safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]
@@ -449,6 +468,8 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         product = products.get(row.slug)
         if product is None or not product.price or product.price < 30:
             continue
+        if not budget.take():
+            break
         checked += 1
         alternatives = await _find_alternatives(api, ctx, product, [product.title])
         safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]

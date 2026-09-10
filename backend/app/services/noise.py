@@ -36,12 +36,16 @@ COMPANION_MARKERS = (
 CATEGORY_CYCLE_DAYS: dict[str, int] = {
     "veg_fruit": 7,          # свіже беруть щотижня
     "grains": 7,             # хліб теж
+    "water": 7,              # воду носять постійно
+    "tobacco": 14,           # пачки стиків вистачає приблизно на два тижні
     "dairy": 14,             # молочка живе довше
     "protein": 10,           # м'ясо й риба
     "sweet_drinks": 10,
+    "coffee_tea": 21,
     "ultra_processed": 14,   # снеки, ковбаси
-    "alcohol": 30,
-    "other": 30,             # побутове, папір, соуси, спеції
+    "alcohol": 21,
+    "household": 45,         # папір, мило, побутова хімія
+    "other": 30,             # соуси, спеції, решта
 }
 DEFAULT_CYCLE_DAYS = 21
 
@@ -85,7 +89,20 @@ def classify(row: dict[str, Any], receipts: int, period_days: int) -> Classified
         return Classified("noise", "супутнє, але береться рідко")
 
     threshold, cycle = threshold_for(name, period_days)
-    if times >= threshold:
+    quantity = float(row.get("total_qty") or 0)
+
+    # Закупівля «про запас» теж є звичкою. Людина бере шість пляшок води за
+    # один похід — за кількістю ЧЕКІВ це виглядає рідко, хоча вода закінчується
+    # щотижня. Тому дивимось і на обсяг, а не лише на частоту появи в чеках.
+    bulk = quantity >= threshold * 2
+
+    if times >= threshold or bulk:
+        if bulk and times < threshold:
+            return Classified(
+                "regular",
+                f"берете про запас: {round(quantity)} шт за {period_days} дн.",
+                threshold, cycle,
+            )
         if threshold == 1:
             reason = f"категорія з довгим циклом (~{cycle} дн.), одна покупка — це норма"
         else:

@@ -22,12 +22,19 @@ export default function Dashboard({ plan, building, onOpenCard, onOpenItem, onOp
   }
 
   if (!plan?.has_data) {
+    const failed = Boolean(plan?.error)
     return (
-      <Screen title="GreenCart" action={<button className="btn" onClick={onRefresh}>Оновити</button>}>
+      <Screen title="GreenCart" action={<button className="btn" onClick={onRefresh}>Спробувати ще раз</button>}>
         <div>
-          <h1>Поки нема з чого починати</h1>
+          <h1>{failed ? 'Не вдалось прочитати дані' : 'Поки нема з чого починати'}</h1>
           <p className="lede">{plan?.reason || 'Не знайшли ваших чеків Сільпо.'}</p>
         </div>
+        {failed && (
+          <p className="muted">
+            Зʼєднання з Сільпо обірвалось під час читання чеків. Це буває на
+            повільній мережі — просто спробуйте ще раз.
+          </p>
+        )}
       </Screen>
     )
   }

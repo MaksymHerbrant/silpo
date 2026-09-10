@@ -31,9 +31,11 @@ export default function App() {
   /** План будується у фоні до хвилини — опитуємо, поки building=true. */
   const loadPlan = useCallback((refresh = false) => {
     clearInterval(poll.current)
+    let tries = 0
     const tick = async () => {
       try {
-        const data = await api.plan(refresh)
+        const data = await api.plan(refresh && tries === 0)
+        tries += 1
         setPlan(data)
         if (!data.building) {
           clearInterval(poll.current)
@@ -48,7 +50,13 @@ export default function App() {
             ]),
           ))
         }
-      } catch { /* мережа моргнула — наступна спроба */ }
+      } catch (e) {
+        // Мережа моргнула — пробуємо ще. Але не вічно.
+        if (tries > 40) {
+          clearInterval(poll.current)
+          setPlan({ has_data: false, reason: e.message })
+        }
+      }
     }
     tick()
     poll.current = setInterval(tick, 2500)

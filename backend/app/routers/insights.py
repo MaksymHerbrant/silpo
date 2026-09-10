@@ -36,6 +36,7 @@ async def overview(
     """Дзеркало покупок: гроші, топ товарів, категорії, динаміка по тижнях."""
     if refresh:
         jobs.invalidate("insights", user_id)
+        jobs.reset_failures("insights", user_id)
 
     async def builder(api, ctx, orders, goal_row):
         return await insights.build(api, ctx, orders, goal_row.get("goal"))
@@ -49,6 +50,7 @@ async def usual(refresh: bool = False, user_id: str = Depends(current_user_id)) 
     """Звичний тижневий набір гостя з актуальними цінами й акціями."""
     if refresh:
         jobs.invalidate("usual", user_id)
+        jobs.reset_failures("usual", user_id)
 
     async def builder(api, ctx, orders, _goal_row):
         return await insights.usual_basket(api, ctx, orders)

@@ -23,6 +23,12 @@ DEFAULT_TTL = 900  # 15 хвилин
 _cache: dict[str, tuple[float, Any]] = {}
 _running: dict[str, bool] = {}
 _errors: dict[str, str] = {}
+_failures: dict[str, int] = {}
+
+# Скільки разів поспіль можна перезапускати задачу, що падає.
+# Без цієї межі кожне опитування статусу стартувало нову спробу, і клієнт
+# вічно бачив «будується», хоча насправді задача щоразу помирала.
+MAX_CONSECUTIVE_FAILURES = 2
 
 
 def _key(name: str, user_id: str) -> str:
@@ -66,8 +72,10 @@ async def start(
     async def _run() -> None:
         try:
             put(name, user_id, await factory())
+            _failures[key] = 0
         except Exception as exc:  # noqa: BLE001
-            _errors[key] = str(exc)[:300]
+            _errors[key] = str(exc)[:300] or type(exc).__name__
+            _failures[key] = _failures.get(key, 0) + 1
             log.exception("фонова задача %s впала", key)
         finally:
             _running[key] = False
@@ -76,15 +84,45 @@ async def start(
     return {"status": "started"}
 
 
+def failures(name: str, user_id: str) -> int:
+    return _failures.get(_key(name, user_id), 0)
+
+
+def reset_failures(name: str, user_id: str) -> None:
+    _failures[_key(name, user_id)] = 0
+    _errors.pop(_key(name, user_id), None)
+
+
 async def cached_or_start(
     name: str,
     user_id: str,
     factory: Callable[[], Awaitable[Any]],
     ttl: int = DEFAULT_TTL,
 ) -> dict[str, Any]:
-    """Повертає кеш; якщо його немає — ставить задачу і віддає building=true."""
+    """Повертає кеш; якщо його немає — ставить задачу і віддає building=true.
+
+    Якщо задача падає підряд кілька разів — перестаємо її перезапускати й
+    повертаємо помилку. Інакше клієнт опитує статус вічно, а користувач
+    дивиться на спінер, який ніколи не зникне.
+    """
     cached = get_cached(name, user_id, ttl)
     if cached is not None:
         return {**cached, "building": is_running(name, user_id), "cached": True}
+
+    if is_running(name, user_id):
+        return {"building": True, "cached": False}
+
+    if failures(name, user_id) >= MAX_CONSECUTIVE_FAILURES:
+        return {
+            "building": False,
+            "cached": False,
+            "has_data": False,
+            "error": last_error(name, user_id),
+            "reason": (
+                "Не вдалось прочитати дані Сільпо: "
+                f"{last_error(name, user_id) or 'зʼєднання обірвалось'}"
+            ),
+        }
+
     await start(name, user_id, factory)
-    return {"building": True, "cached": False, "error": last_error(name, user_id)}
+    return {"building": True, "cached": False}

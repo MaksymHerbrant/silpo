@@ -31,6 +31,7 @@ async def get_plan(refresh: bool = False, user_id: str = Depends(current_user_id
     """Знахідки агента + план покупки. Довга операція йде у фон із кешем."""
     if refresh:
         jobs.invalidate("plan_next", user_id)
+        jobs.reset_failures("plan_next", user_id)
 
     goal_row = await repo.get_goal(user_id) or {}
 
