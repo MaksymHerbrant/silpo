@@ -13,9 +13,10 @@ const ACTION_LABEL = {
 }
 
 export default function ShoppingPlan({
-  plan, chosen, onToggle, onSwitch, onOpenItem, onNext, onBack,
+  plan, chosen, onToggle, onSwitch, onOpenItem, onNext, onBack, onOpenSettings, busy,
 }) {
   const items = plan?.items || []
+  const summary = plan?.summary || {}
   const selected = items.filter((i) => chosen[i.slug]?.selected)
   const total = selected.reduce((sum, i) => {
     const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
@@ -31,16 +32,18 @@ export default function ShoppingPlan({
       title="План покупки"
       onBack={onBack}
       action={
-        <button className="btn" onClick={onNext} disabled={!selected.length}>
-          Далі · {selected.length} товар(ів) · {Math.round(total)} ₴
+        <button className="btn" onClick={onNext} disabled={!selected.length || busy}>
+          {busy
+            ? 'Додаємо в кошик…'
+            : `Додати схвалене в кошик · ${selected.length} · ${Math.round(total)} ₴`}
         </button>
       }
     >
       <div>
         <h1>Ваш звичний набір</h1>
         <p className="lede">
-          Зібраний із ваших покупок. Зніміть позначку з того, що не потрібне,
-          або перемкніться на знайдену альтернативу.
+          Тільки те, що ви берете <b>регулярно</b> — з покупками, розкиданими
+          по різних тижнях, а не злиплими в один похід.
         </p>
       </div>
 
@@ -79,12 +82,34 @@ export default function ShoppingPlan({
 
                 <div className="plan-meta">
                   <span>{i.quantity} шт</span>
-                  {i.times_bought > 1 && <span>· берете {i.times_bought} раз(и)</span>}
+                  {i.habit?.label && (
+                    <span className="tag good">{i.habit.label}</span>
+                  )}
+                  {i.brand_indifferent && (
+                    <span className="tag">марка не принципова</span>
+                  )}
+                  {i.times_bought > 1 && <span>· {i.times_bought} походи</span>}
                   {label.text !== 'Лишити' && (
                     <span className={`tag ${label.tone}`}>{label.text}</span>
                   )}
                 </div>
 
+                {i.kind_note && (
+                  <div className="plan-note">{i.kind_note}</div>
+                )}
+                {i.agent_why && (
+                  <div className="plan-note agent">{i.agent_why}</div>
+                )}
+                {i.evidence?.length > 0 && (
+                  <button className="why" onClick={() => onOpenItem(i.slug)}>
+                    Чому я це пропоную →
+                  </button>
+                )}
+                {i.alternative_rejected && (
+                  <div className="plan-note agent">
+                    🤖 Заміну «{i.alternative_rejected.name}» відхилив: {i.alternative_rejected.why}
+                  </div>
+                )}
                 {i.note && !useAlt && (
                   <div className={`plan-note${i.action === 'blocked' ? ' warn' : ''}`}>{i.note}</div>
                 )}
@@ -102,12 +127,14 @@ export default function ShoppingPlan({
                         <>Повернути «{i.name}» за {Math.round(i.price)} ₴</>
                       ) : (
                         <>
+                          {alt.composition_known === false && '⚠️ '}
                           {alt.name} — {alt.why}
-                          {alt.saved > 0 && <b className="money"> −{Math.round(alt.saved)} ₴</b>}
+                          {alt.saved > 0 && <b className="delta down"> −{Math.round(alt.saved)} ₴</b>}
+                          {alt.saved < 0 && <b className="delta up"> +{Math.round(-alt.saved)} ₴</b>}
                         </>
                       )}
                     </span>
-                    <span className="alt-action">{useAlt ? 'Повернути' : 'Замінити'}</span>
+                    <span className="alt-action">{useAlt ? 'Лишити своє' : 'Взяти це'}</span>
                   </button>
                 )}
               </div>
@@ -131,6 +158,16 @@ export default function ShoppingPlan({
           </div>
         )}
       </div>
+
+      {summary.price_tolerance_label && (
+        <p className="over-note" style={{ textAlign: 'center', marginTop: -8 }}>
+          Заміни підбирались із порогом «{summary.price_tolerance_label}»
+          {summary.hidden_by_threshold > 0 && ` · ${summary.hidden_by_threshold} дорожчих сховано`}
+          {onOpenSettings && (
+            <> · <button className="inline-link" onClick={onOpenSettings}>змінити</button></>
+          )}
+        </p>
+      )}
     </Screen>
   )
 }

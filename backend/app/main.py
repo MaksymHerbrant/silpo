@@ -1,18 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import get_settings
 from app.db.supabase import db
+from app.services import digest
 from app.routers import (
-    agent, auth, bot, cart, debug, insights, plan, swaps, trends, week,
+    agent, auth, basket, bot, cart, debug, insights, live, metrics, nutrition,
+    plan, reminders, settings as settings_router, swaps, trends, week,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -20,7 +23,16 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    # Дайджест прокидається сам. Задача переживає падіння окремого проходу,
+    # а вимикається прапорцем — щоб тести й локальна розробка не слали нічого.
+    sweep = None
+    if get_settings().enable_digest:
+        sweep = asyncio.create_task(digest.sweep_forever())
     yield
+    if sweep is not None:
+        sweep.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweep
     await db().aclose()
 
 
@@ -56,6 +68,12 @@ app.include_router(week.router)
 app.include_router(agent.router)
 app.include_router(insights.router)
 app.include_router(plan.router)
+app.include_router(settings_router.router)
+app.include_router(basket.router)
+app.include_router(nutrition.router)
+app.include_router(reminders.router)
+app.include_router(metrics.router)
+app.include_router(live.router)
 
 
 @app.get("/health")
@@ -81,9 +99,30 @@ if FRONTEND_DIST.is_dir():
     async def spa_root() -> FileResponse:
         return FileResponse(FRONTEND_DIST / "index.html")
 
+    # Перші сегменти всіх зареєстрованих API-маршрутів: settings, cart, plan…
+    API_SEGMENTS = {
+        route.path.strip("/").split("/")[0]
+        for route in app.routes
+        if getattr(route, "path", "").strip("/")
+    } - {"", "{path:path}"}
+
     @app.get("/{path:path}", include_in_schema=False)
-    async def spa_fallback(path: str) -> FileResponse:
+    async def spa_fallback(path: str):
         candidate = FRONTEND_DIST / path
         if candidate.is_file():
             return FileResponse(candidate)
+
+        # Невідомий шлях ПІД API-сегментом — це відсутній маршрут, а не екран
+        # застосунку. Раніше сюди приходив index.html з кодом 200: фронтенд
+        # отримував HTML замість JSON, падав на розборі й мовчки показував
+        # порожній екран. Через це застарілий процес бекенду виглядав як
+        # «налаштування не зберігаються» замість «маршруту не існує».
+        if path.strip("/").split("/")[0] in API_SEGMENTS:
+            return JSONResponse(
+                status_code=404,
+                content={
+                    "detail": f"Маршрут /{path} не існує. "
+                              "Найімовірніше, бекенд запущено зі старим кодом — перезапустіть його."
+                },
+            )
         return FileResponse(FRONTEND_DIST / "index.html")

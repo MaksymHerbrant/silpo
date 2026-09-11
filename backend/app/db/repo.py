@@ -232,6 +232,154 @@ async def save_goal(user_id: str, values: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+# --- Налаштування агента ----------------------------------------------------
+# Живуть у тому ж рядку user_goals: це та сама сутність «як агент має
+# поводитися зі мною». Пишемо тільки передані поля, щоб не затерти норми.
+PREF_FIELDS = (
+    "mode", "price_tolerance", "restriction_strictness", "onboarded_at",
+    "digest_sent_at",
+)
+
+
+async def get_prefs(user_id: str) -> dict[str, Any]:
+    """Повертає ЛИШЕ наявні ключі.
+
+    Це принципово: для price_tolerance значення None означає «без обмежень»,
+    а відсутність ключа — «гість ще не налаштовував». Якби ми підставляли
+    None для відсутніх, пропуск онбордингу читався б як «без обмежень».
+    """
+    row = await get_goal(user_id) or {}
+    return {key: row[key] for key in PREF_FIELDS if key in row}
+
+
+async def save_prefs(user_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    patch = {key: values[key] for key in PREF_FIELDS if key in values}
+    if not patch:
+        return await get_prefs(user_id)
+    existing = await get_goal(user_id)
+    if existing:
+        await db().update("user_goals", {"user_id": user_id}, {**patch, "updated_at": _now()})
+    else:
+        # Рядка ще немає: створюємо мінімальний, не вигадуючи харчових норм.
+        # Дефолти дублюють DEFAULT колонок із міграції 0004, щоб in-memory
+        # режим поводився так само, як база.
+        await db().upsert(
+            "user_goals",
+            {
+                "user_id": user_id, "goal": "health", "mode": "auto",
+                "price_tolerance": 0.05, "restriction_strictness": {},
+                "updated_at": _now(), **patch,
+            },
+            on_conflict="user_id",
+        )
+    return await get_prefs(user_id)
+
+
+# --- Кошик застосунку ---------------------------------------------------------
+# Товар з будь-якого екрана лягає сюди. У кошик Сільпо пишемо один раз — на
+# «Оформити», щоб гість міг збирати набір і передумувати без наслідків.
+async def cart_items(user_id: str) -> list[dict[str, Any]]:
+    return await db().select("app_cart", {"user_id": user_id}, order="added_at", desc=False)
+
+
+async def cart_add(user_id: str, item: dict[str, Any]) -> dict[str, Any]:
+    """Повторне додавання того самого товару збільшує кількість, а не дублює рядок."""
+    existing = await db().select_one(
+        "app_cart", {"user_id": user_id, "product_id": item["product_id"]}
+    )
+    if existing:
+        quantity = int(existing.get("quantity") or 1) + int(item.get("quantity") or 1)
+        await db().update(
+            "app_cart", {"id": existing["id"]}, {"quantity": quantity}
+        )
+        return {**existing, "quantity": quantity}
+    return await db().insert("app_cart", {
+        "user_id": user_id,
+        "product_id": item["product_id"],
+        "slug": item.get("slug"),
+        "name": item.get("name"),
+        "image": item.get("image"),
+        "price": item.get("price"),
+        "quantity": max(int(item.get("quantity") or 1), 1),
+        "source": item.get("source"),
+        "added_at": _now(),
+    })
+
+
+async def cart_set_quantity(user_id: str, item_id: str, quantity: int) -> None:
+    if quantity <= 0:
+        await db().delete("app_cart", {"id": item_id, "user_id": user_id})
+        return
+    await db().update("app_cart", {"id": item_id, "user_id": user_id}, {"quantity": quantity})
+
+
+async def cart_remove(user_id: str, item_id: str) -> None:
+    await db().delete("app_cart", {"id": item_id, "user_id": user_id})
+
+
+async def cart_clear(user_id: str) -> None:
+    await db().delete("app_cart", {"user_id": user_id})
+
+
+# --- Цикли покупок і стеження за цінами ---------------------------------------
+async def cycles_for(user_id: str) -> dict[str, dict[str, Any]]:
+    rows = await db().select("product_cycles", {"user_id": user_id})
+    return {r["slug"]: r for r in rows}
+
+
+async def save_cycle(user_id: str, slug: str, values: dict[str, Any]) -> dict[str, Any]:
+    return await db().upsert(
+        "product_cycles",
+        {"user_id": user_id, "slug": slug, "updated_at": _now(), **values},
+        on_conflict="user_id,slug",
+    )
+
+
+async def price_snapshot(user_id: str) -> dict[str, dict[str, Any]]:
+    rows = await db().select("price_watch", {"user_id": user_id})
+    return {r["slug"]: r for r in rows}
+
+
+async def save_price_snapshot(user_id: str, rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        await db().upsert(
+            "price_watch",
+            {"user_id": user_id, "seen_at": _now(), **row},
+            on_conflict="user_id,slug",
+        )
+
+
+async def users_with_tokens() -> list[dict[str, Any]]:
+    """Кому взагалі є сенс слати дайджест."""
+    rows = await db().select("silpo_oauth_tokens", {})
+    return [{"user_id": r["user_id"]} for r in rows if r.get("user_id")]
+
+
+# --- Метрика рішень -----------------------------------------------------------
+async def open_decisions(user_id: str) -> list[dict[str, Any]]:
+    """Пропозиції, щодо яких гість ще не вирішив."""
+    rows = await db().select("decisions", {"user_id": user_id})
+    return [r for r in rows if r.get("accepted") is None]
+
+
+async def record_decision(user_id: str, values: dict[str, Any]) -> dict[str, Any]:
+    return await db().insert("decisions", {"user_id": user_id, "shown_at": _now(), **values})
+
+
+async def get_decision(user_id: str, decision_id: str) -> dict[str, Any] | None:
+    return await db().select_one("decisions", {"id": decision_id, "user_id": user_id})
+
+
+async def decide(decision_id: str, accepted: bool) -> None:
+    await db().update(
+        "decisions", {"id": decision_id}, {"accepted": accepted, "decided_at": _now()}
+    )
+
+
+async def all_decisions(user_id: str) -> list[dict[str, Any]]:
+    return await db().select("decisions", {"user_id": user_id}, order="shown_at", desc=True)
+
+
 async def save_plan(user_id: str, plan: dict[str, Any]) -> dict[str, Any]:
     return await db().insert("basket_plans", {
         "user_id": user_id,

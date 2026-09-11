@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.nutrition.categories import categorize
+from app.services import habit_model
 
 # Супутні витратні: беруться разом з іншими покупками, не є окремим вибором
 COMPANION_MARKERS = (
@@ -52,11 +53,22 @@ DEFAULT_CYCLE_DAYS = 21
 EXPECTED_RATIO = 0.4         # яку частку очікуваних покупок вважаємо звичкою
 COMPANION_MIN_SHARE = 0.25   # супутнє лишається, якщо є у чверті чеків
 
+# Звичка — це ПОВТОРЕННЯ. Одна покупка не є звичкою навіть у категорії з
+# довгим циклом: ми просто ще не знаємо, чи вона повториться.
+#
+# Без цього правила адаптивний поріг вироджувався в одиницю майже скрізь
+# (46 днів / цикл 14 × 0.4 ≈ 1), і в «звичний кошик» потрапляли чіпси за
+# 229 ₴, куплені раз, джин і пиво. Краще показати менше, але правду.
+MIN_TIMES = 2
+# Закупівля про запас — теж звичка, але тільки якщо обсяг справді помітний
+BULK_MIN_UNITS = 4
+
 
 @dataclass
 class Classified:
     kind: str          # regular | companion | noise
     reason: str        # пояснення для деталізації
+    habit: Any = None  # розбір звички: розподіл покупок у часі
     threshold: int = 1
     cycle_days: int = DEFAULT_CYCLE_DAYS
 
@@ -78,7 +90,12 @@ def threshold_for(name: str, period_days: int) -> tuple[int, int]:
 
 
 def classify(row: dict[str, Any], receipts: int, period_days: int) -> Classified:
-    """row: агрегат по товару з полями name / times."""
+    """Визначає, чи товар справді є звичкою.
+
+    Рішення ухвалює habit_model: він дивиться на РОЗПОДІЛ покупок у часі, а не
+    лише на їх кількість. Тут лишаються два винятки, яких модель не бачить:
+    супутні витратні (пакети) і закупівля про запас.
+    """
     times = int(row.get("times") or 0)
     name = row.get("name") or ""
 
@@ -90,30 +107,19 @@ def classify(row: dict[str, Any], receipts: int, period_days: int) -> Classified
 
     threshold, cycle = threshold_for(name, period_days)
     quantity = float(row.get("total_qty") or 0)
+    habit = habit_model.analyse(row.get("days") or [], period_days, cycle)
 
-    # Закупівля «про запас» теж є звичкою. Людина бере шість пляшок води за
-    # один похід — за кількістю ЧЕКІВ це виглядає рідко, хоча вода закінчується
-    # щотижня. Тому дивимось і на обсяг, а не лише на частоту появи в чеках.
-    bulk = quantity >= threshold * 2
+    # Закупівля про запас: десять пляшок води за один похід — це запас на
+    # тижні вперед, навіть якщо походів було мало.
+    bulk = quantity >= max(threshold * 2, BULK_MIN_UNITS)
+    if bulk and habit.kind != habit_model.STABLE:
+        return Classified(
+            "regular", f"берете про запас: {round(quantity)} шт за {period_days} дн.",
+            habit, threshold, cycle,
+        )
 
-    if times >= threshold or bulk:
-        if bulk and times < threshold:
-            return Classified(
-                "regular",
-                f"берете про запас: {round(quantity)} шт за {period_days} дн.",
-                threshold, cycle,
-            )
-        if threshold == 1:
-            reason = f"категорія з довгим циклом (~{cycle} дн.), одна покупка — це норма"
-        else:
-            reason = f"купуєте {times} раз(и) за {period_days} дн. (поріг {threshold})"
-        return Classified("regular", reason, threshold, cycle)
-
-    return Classified(
-        "noise",
-        f"разова покупка: для цієї категорії очікується щонайменше {threshold} за період",
-        threshold, cycle,
-    )
+    kind = "regular" if habit.kind == habit_model.STABLE else "noise"
+    return Classified(kind, habit.reason, habit, threshold, cycle)
 
 
 def split(rows: list[dict[str, Any]], receipts: int, period_days: int) -> dict[str, Any]:
@@ -126,14 +132,24 @@ def split(rows: list[dict[str, Any]], receipts: int, period_days: int) -> dict[s
         enriched = {
             **row, "kind": verdict.kind, "kind_reason": verdict.reason,
             "cycle_days": verdict.cycle_days, "threshold": verdict.threshold,
+            "habit": verdict.habit.as_dict() if verdict.habit else None,
         }
         (noise if verdict.kind == "noise" else basket).append(enriched)
 
     basket.sort(key=lambda r: (r["kind"] != "regular", -(r.get("spend") or 0)))
     noise.sort(key=lambda r: -(r.get("spend") or 0))
+    def _of_kind(kind: str) -> list[dict[str, Any]]:
+        return sorted(
+            (r for r in noise if (r.get("habit") or {}).get("kind") == kind),
+            key=lambda r: -(r.get("spend") or 0),
+        )
+
     return {
         "basket": basket,
         "noise": noise,
+        # Не звичка — але і не сміття: варте окремих слів в інтерфейсі
+        "emerging": _of_kind(habit_model.EMERGING),
+        "fading": _of_kind(habit_model.FADING),
         "filtered_count": len(noise),
         "filtered_spend": round(sum(r.get("spend") or 0 for r in noise), 2),
     }

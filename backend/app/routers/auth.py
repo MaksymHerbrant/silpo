@@ -11,6 +11,8 @@ from app.db import repo
 from app.mcp import oauth
 from app.security.session import current_user_id, issue_session
 from app.security.telegram_auth import InitDataError, verify_init_data
+from app.services import cache, jobs
+
 from fastapi import Depends
 
 router = APIRouter(tags=["auth"])
@@ -135,5 +137,16 @@ async def silpo_callback(code: str | None = None, state: str | None = None, erro
 
 @router.post("/auth/silpo/disconnect")
 async def silpo_disconnect(user_id: str = Depends(current_user_id)) -> dict:
+    """Вихід з акаунта: відкликаємо доступ до Сільпо і чистимо все похідне.
+
+    Налаштування й історію рішень лишаємо — якщо гість повернеться, його
+    поріг і режим мають бути на місці, а не питатись заново.
+    """
     await repo.drop_tokens(user_id)
-    return {"connected": False}
+    await cache.drop_all(user_id)
+    await repo.cart_clear(user_id)
+    for name in ("plan_next", "insights", "usual", "coupons",
+                 "nutrition:week", "nutrition:month", "nutrition:all"):
+        jobs.invalidate(name, user_id)
+        jobs.reset_failures(name, user_id)
+    return {"connected": False, "cleared": True}

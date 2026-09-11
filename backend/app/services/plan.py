@@ -16,6 +16,8 @@ Health свідомо не є головним числом. Жодного «He
 """
 from __future__ import annotations
 
+import asyncio
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -24,7 +26,10 @@ from app.nutrition import allergens as al
 from app.nutrition import categories as cats
 from app.nutrition.parser import ProductInfo, parse_product
 from app.nutrition.rules import match_rule
+from app.nutrition.score import score_product
+from app.services import kinds
 from app.services import noise as noise_filter
+from app.services import pricing
 from app.services import profile as profile_service
 
 # Дії, які гість може прийняти щодо позиції свого звичного набору
@@ -34,15 +39,17 @@ ACTION_ADD = "add"          # докупити (акція на те, що за�
 ACTION_REVIEW = "review"    # варте уваги: подорожчало або є вигідніший аналог
 ACTION_BLOCKED = "blocked"  # конфліктує з обмеженнями гостя — не пропонуємо
 
-MAX_ALTERNATIVE_LOOKUPS = 2
-MAX_CANDIDATES = 3
+MAX_ALTERNATIVE_LOOKUPS = 3
+MAX_CANDIDATES = 2
 # Загальна стеля на пошуки альтернатив за одну побудову. Кожен пошук — це
 # виклик find_products_batch плюс до трьох get_product_details, тобто
 # найдорожча частина. Без стелі побудова тягнеться понад хвилину і встигає
 # застати обрив зʼєднання.
-MAX_TOTAL_SEARCHES = 5
+# Виклики тепер ідуть паралельно, тож стеля може бути вищою
+MAX_TOTAL_SEARCHES = 8
 MIN_SAVING = 5.0            # менша різниця в ціні не варта уваги гостя
-MAX_PRICE_RATIO = 1.15      # альтернатива не може бути помітно дорожчою
+# Наскільки дорожчою може бути альтернатива — вирішує НЕ цей файл, а гість.
+# Поріг живе в services/pricing.py і приходить сюди параметром `tolerance`.
 
 # Товар із довгим циклом не потрібен щотижня. Туалетний папір і джин у
 # тижневому кошику виглядають абсурдно — тому позначаємо ритм покупки
@@ -84,6 +91,14 @@ class PlanItem:
     note: str = ""
     kind: str = "regular"           # regular | companion
     kind_reason: str = ""
+    # Вид товару й лояльність до марки всередині нього
+    kind_key: str | None = None
+    kind_brands: int = 1
+    loyalty: float | None = None
+    brand_indifferent: bool = False
+    kind_note: str = ""
+    members: list[dict[str, Any]] = field(default_factory=list)
+    habit: dict[str, Any] | None = None   # розподіл покупок у часі
     cadence: str = "weekly"         # weekly | biweekly | monthly
     cadence_label: str = ""
     cycle_days: int = 7
@@ -93,6 +108,9 @@ class PlanItem:
     on_promotion: bool = False
     old_price: float | None = None
     alternative: dict[str, Any] | None = None
+    # Варіанти, які знайшлися, але вийшли за ціновий поріг гостя. Ми їх не
+    # підставляємо — вони доступні лише через «показати ще варіанти».
+    alternatives_over: list[dict[str, Any]] = field(default_factory=list)
     selected: bool = True          # у плані за замовчуванням, гість може зняти
 
     def as_dict(self) -> dict[str, Any]:
@@ -103,9 +121,13 @@ class PlanItem:
             "times_bought": self.times_bought, "action": self.action, "note": self.note,
             "saved": round(self.saved, 2), "on_promotion": self.on_promotion,
             "old_price": self.old_price, "alternative": self.alternative,
+            "alternatives_over": self.alternatives_over,
             "selected": self.selected,
             "line_total": round(self.price * self.quantity, 2),
-            "kind": self.kind, "kind_reason": self.kind_reason,
+            "kind": self.kind, "kind_reason": self.kind_reason, "habit": self.habit,
+            "kind_key": self.kind_key, "kind_brands": self.kind_brands,
+            "loyalty": self.loyalty, "brand_indifferent": self.brand_indifferent,
+            "kind_note": self.kind_note, "members": self.members,
             "cadence": self.cadence, "cadence_label": self.cadence_label,
             "cycle_days": self.cycle_days,
             "allergen_hits": self.allergen_hits,
@@ -128,15 +150,126 @@ class Finding:
         }
 
 
+@dataclass
+class Alternatives:
+    """Кандидати, розділені ціновим порогом гостя.
+
+    `within` — те, що показуємо за замовчуванням. `over` — те, що існує, але
+    виходить за поріг: воно живе під «показати ще варіанти» і ніколи не
+    підставляється саме собою.
+    """
+    within: list[tuple[ProductInfo, float]] = field(default_factory=list)
+    over: list[tuple[ProductInfo, float]] = field(default_factory=list)
+
+
+def _health_of(product: ProductInfo) -> int:
+    """Детермінований бал товару 0–100. Вирішує лише всередині цінової смуги."""
+    try:
+        return score_product(product).score or 0
+    except Exception:  # noqa: BLE001 — скор не має валити пошук замін
+        return 0
+
+
+def _composition_known(product: ProductInfo) -> bool:
+    """Чи є в каталозі хоч якісь дані про склад цього товару.
+
+    Критично для обіцянки безпеки: ВІДСУТНІСТЬ даних про склад — не доказ
+    відсутності алергену. Перевірено наживо: каталог віддав заміну без складу
+    взагалі, і перевірка алергенів не мала що читати. Казати про такий товар
+    «без вашого алергену» — це видавати незнання за гарантію.
+    """
+    return bool(product.allergens_text or product.ingredients)
+
+
+def _alt_dict(
+    candidate: ProductInfo, saving: float, why: str, over_threshold: bool = False
+) -> dict[str, Any]:
+    return {
+        "slug": candidate.slug, "product_id": candidate.product_id,
+        "name": candidate.title, "price": candidate.price, "image": candidate.image,
+        "saved": saving, "on_promotion": candidate.on_promotion, "why": why,
+        "over_threshold": over_threshold,
+        "composition_known": _composition_known(candidate),
+    }
+
+
+# Службові слова, які лише подовжують запит і нічого не додають до пошуку
+QUERY_STOP_WORDS = frozenset({
+    "зі", "з", "із", "для", "та", "і", "й", "без", "у", "в", "на", "по",
+    "смаком", "смак", "ароматом", "штук", "шт",
+})
+
+
+def _search_queries(product: ProductInfo) -> list[str]:
+    """Короткі запити для пошуку аналогів.
+
+    Каталог Сільпо не знаходить нічого за повною назвою товару. Перевірено
+    наживо: «Снек пікантний Pringles зі смаком барбекю» дає 0 результатів,
+    «Pringles» — 1, «чіпси» — 14. Тому назву треба вкоротити до того, що
+    справді шукається: марка й головний іменник.
+    """
+    queries: list[str] = []
+    if product.brand:
+        queries.append(product.brand.strip())
+
+    words = [w.strip("«»\"'`.,()–—") for w in product.title.split()]
+    words = [w for w in words if w and w.lower() not in QUERY_STOP_WORDS]
+    if words:
+        queries.append(words[0])                      # «Молоко», «Снек», «Напій»
+        if len(words) > 1:
+            queries.append(" ".join(words[:2]))       # «Молоко Премія»
+
+    seen: set[str] = set()
+    out: list[str] = []
+    for query in queries:
+        key = query.lower()
+        if len(query) >= 3 and key not in seen:
+            seen.add(key)
+            out.append(query)
+    return out[:3] or [product.title]
+
+
+def _first_safe(
+    pairs: list[tuple[ProductInfo, float]], restrictions
+) -> tuple[ProductInfo, float, bool] | None:
+    """Перший кандидат без конфлікту. Спершу ті, чий склад ВІДОМИЙ.
+
+    Це єдине місце, де безпека свідомо переважає ціну: коли позиція
+    заблокована алергеном, товар із перевіреним складом кращий за трохи
+    дешевший товар, про який ми нічого не знаємо.
+
+    Третій елемент — чи склад справді перевірено. Він визначає формулювання
+    в інтерфейсі, щоб незнання не виглядало гарантією.
+    """
+    unknown: tuple[ProductInfo, float, bool] | None = None
+    for candidate, saving in pairs:
+        if al.blocking(al.check_product(candidate, restrictions)):
+            continue
+        if _composition_known(candidate):
+            return candidate, saving, True
+        if unknown is None:
+            unknown = (candidate, saving, False)
+    return unknown
+
+
 async def _find_alternatives(
-    api, ctx: T.CartContext, product: ProductInfo, queries: list[str]
-) -> list[tuple[ProductInfo, float]]:
-    """Шукає дешевші аналоги тієї самої ролі. Повертає (товар, скільки економить)."""
+    api, ctx: T.CartContext, product: ProductInfo, queries: list[str],
+    tolerance: Any = pricing.DEFAULT_TOLERANCE,
+) -> Alternatives:
+    """Шукає аналоги тієї самої ролі й ділить їх ціновим порогом гостя.
+
+    Порядок навмисний: спершу відсікаємо все, що виходить за поріг (ціна —
+    критерій №1 за опитуванням), і лише всередині коридору сортуємо за
+    користю. Так дієтологія ніколи не переважає гроші, але й не зникає.
+    """
     payload = await api.call(T.FIND_PRODUCTS_BATCH, ctx.as_args(products=queries[:12]))
     if T.is_mcp_error(payload) or not isinstance(payload, dict):
-        return []
+        return Alternatives()
 
-    out: list[tuple[ProductInfo, float]] = []
+    # Мережева стеля: навіть «без обмежень» не тягне картки втричі дорожчих товарів
+    hard_cap = pricing.cap_for(product.price, None)
+
+    found: list[tuple[ProductInfo, float]] = []
     seen: set[str] = set()
     for block in payload.get("queries") or []:
         for raw in (block.get("products") or [])[:MAX_CANDIDATES]:
@@ -147,7 +280,7 @@ async def _find_alternatives(
             price = raw.get("price")
             if not price or not product.price:
                 continue
-            if price > product.price * MAX_PRICE_RATIO:
+            if hard_cap is not None and price > hard_cap:
                 continue
             try:
                 detail = await api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(slug))
@@ -159,8 +292,13 @@ async def _find_alternatives(
             candidate.product_id = candidate.product_id or str(raw.get("id") or "")
             if not candidate.price or not _same_product_kind(product, candidate):
                 continue
-            out.append((candidate, round(product.price - candidate.price, 2)))
-    return out
+            found.append((candidate, round(product.price - candidate.price, 2)))
+
+    within, over = pricing.split(product.price, found, tolerance)
+    return Alternatives(
+        within=pricing.rank(within, _health_of),
+        over=pricing.rank(over, _health_of),
+    )
 
 
 def _same_product_kind(original: ProductInfo, candidate: ProductInfo) -> bool:
@@ -207,28 +345,92 @@ def _health_candidate(items: list[dict[str, Any]], products: dict[str, ProductIn
     return best
 
 
+def habit_showcase(split: dict[str, Any]) -> dict[str, Any] | None:
+    """Найнаочніша пара прикладів: сильна звичка проти слабкого сигналу.
+
+    Це головний доказ того, що ми не рахуємо рядки чеків. Слабкий приклад —
+    товар, який зʼявлявся багато разів, але майже все в один похід. Сильний —
+    товар, куплений у багато різних днів, часто різних марок.
+
+    Беремо з РЕАЛЬНИХ даних гостя, нічого не вигадуючи. Якщо переконливої
+    пари немає — повертаємо None і в інтерфейсі нічого не показуємо.
+    """
+    weak = None
+    for row in split.get("noise") or []:
+        lines, days = int(row.get("lines") or 0), len(row.get("days") or [])
+        if days and lines >= days * 3 and lines >= 4:
+            if weak is None or lines > weak["lines"]:
+                weak = {"name": row.get("name"), "lines": lines, "days": days}
+
+    strong = None
+    best_score = 0.0
+    for row in split.get("basket") or []:
+        # Пакети й серветки — супутні витратні, а не звичка. Вони б виграли
+        # за частотою й зіпсували найнаочніший приклад продукту.
+        if row.get("kind") == "companion":
+            continue
+        days = len(row.get("days") or [])
+        if days < 5:
+            continue
+        habit = row.get("habit") or {}
+        brands = int(row.get("kind_brands") or 1)
+        # Найпереконливіший приклад — той, де багато днів І багато марок:
+        # саме він показує, що звичка живе на рівні виду, а не артикула.
+        score = days * (1 + (brands - 1) * 0.5 if row.get("brand_indifferent") else 1)
+        if score <= best_score:
+            continue
+        best_score = score
+        strong = {
+            "name": row.get("name"), "days": days,
+            "weeks": habit.get("weeks") or 0,
+            "brands": brands,
+            "kind": row.get("kind_key"),
+            "brand_indifferent": bool(row.get("brand_indifferent")),
+        }
+
+    if not strong:
+        return None
+    return {"strong": strong, "weak": weak}
+
+
 def _aggregate(orders) -> list[dict[str, Any]]:
-    """Зводить чеки до агрегатів по товарах: скільки разів, на скільки грошей."""
+    """Зводить чеки до агрегатів по товарах.
+
+    `times` — це кількість РІЗНИХ ДНІВ, коли товар купували, а не кількість
+    рядків у чеках. Різниця принципова: у одному чеку той самий товар може
+    стояти кількома рядками. На живих даних форель мала вісім рядків — усі
+    восьмеро за 7 вересня. Рахуючи рядки, ми оголошували один похід у магазин
+    вісьмома покупками й називали це звичкою.
+    """
     rows: dict[str, dict[str, Any]] = {}
     for order in orders:
+        day = order.created_at.date().isoformat()
         for line in order.items:
             slug = line.get("slug")
             if not slug:
                 continue
             row = rows.setdefault(slug, {
                 "slug": slug, "name": line.get("name"), "times": 0, "total_qty": 0.0,
-                "spend": 0.0, "image": line.get("image"), "history": [],
+                "spend": 0.0, "image": line.get("image"), "history": [], "_days": set(),
+                "lines": 0,
             })
             qty = float(line.get("quantity") or 1)
             price = float(line.get("price") or 0)
-            row["times"] += 1
+            row["lines"] += 1
+            row["_days"].add(day)
             row["total_qty"] += qty
             row["spend"] += price * qty
             row["history"].append({
-                "date": order.created_at.date().isoformat(),
-                "price": price, "quantity": qty, "branch": order.branch,
+                "date": day, "price": price, "quantity": qty, "branch": order.branch,
             })
-    return list(rows.values())
+
+    out: list[dict[str, Any]] = []
+    for row in rows.values():
+        days = row.pop("_days")
+        row["times"] = len(days)          # походів у магазин, а не рядків
+        row["days"] = sorted(days)
+        out.append(row)
+    return out
 
 
 class SearchBudget:
@@ -244,9 +446,107 @@ class SearchBudget:
         return True
 
 
-async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dict[str, Any]:
-    """Складає план наступної покупки: профіль, фільтр шуму, знахідки."""
-    budget = SearchBudget()
+class AlternativeSearch:
+    """Один товар шукаємо один раз за побудову.
+
+    Без кешу позиція, для якої заміни не знайшлось у гілці вподобань,
+    з'їдає бюджет ще раз у гілці дешевших аналогів — і товари нижче
+    в списку не перевіряються взагалі. Саме через це в живому прогоні
+    заміна на тютюн за 164.94 ₴ (−15 ₴) не доходила до гостя.
+    """
+
+    def __init__(self, api, ctx: T.CartContext, tolerance: Any) -> None:
+        self._api = api
+        self._ctx = ctx
+        self._tolerance = tolerance
+        self._budget = SearchBudget()
+        self._cache: dict[tuple[str, tuple[str, ...]], Alternatives] = {}
+
+    async def get(self, product: ProductInfo, queries: list[str]) -> Alternatives | None:
+        """None означає «бюджет вичерпано», а не «нічого не знайшлось»."""
+        key = (product.slug, tuple(queries))
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        if not self._budget.take():
+            return None
+        result = await _find_alternatives(
+            self._api, self._ctx, product, queries, self._tolerance
+        )
+        self._cache[key] = result
+        return result
+
+
+# Модель може ПІДНЯТИ товар до звички лише якщо покупок було принаймні
+# стільки. Це арифметика, а не судження: одна покупка не стає ритмом від
+# того, що модель так вирішила.
+LLM_PROMOTE_MIN_DAYS = 2
+MAX_BASKET_ITEMS = 14
+
+
+def _merge_verdicts(split: dict[str, Any], verdicts: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    """Вердикт моделі вирішує склад кошика — в межах арифметичних поручнів.
+
+    Скрипт рахує дати й дає першу оцінку. Модель бачить ТІ САМІ дати по всіх
+    кандидатах, включно з відсіяними, і може як підняти товар до звички, так
+    і прибрати. Пониження приймаємо завжди; підняття — лише коли покупок
+    справді було кілька.
+    """
+    if not verdicts:
+        return split
+
+    by_slug = {r["slug"]: r for r in split["basket"] + split["noise"] if r.get("slug")}
+    basket, noise, emerging, fading = [], [], [], []
+    promoted = demoted = 0
+
+    for slug, row in by_slug.items():
+        judged = verdicts.get(slug)
+        was_basket = row in split["basket"]
+        verdict = judged["verdict"] if judged else None
+        days = len(row.get("days") or [])
+
+        if judged and judged.get("why"):
+            row = {**row, "agent_why": judged["why"]}
+
+        if verdict == "habit" and days >= LLM_PROMOTE_MIN_DAYS:
+            if not was_basket:
+                promoted += 1
+                row = {**row, "kind": "regular", "kind_reason": judged.get("why") or row["kind_reason"]}
+            basket.append(row)
+        elif verdict in {"new", "dropped", "occasional"}:
+            if was_basket and row.get("kind") != "companion":
+                demoted += 1
+            (emerging if verdict == "new" else fading if verdict == "dropped" else noise).append(row)
+        elif was_basket:
+            basket.append(row)
+        else:
+            noise.append(row)
+
+    basket.sort(key=lambda r: (r["kind"] != "regular", -(r.get("spend") or 0)))
+    return {
+        **split,
+        "basket": basket[:MAX_BASKET_ITEMS],
+        "noise": sorted(noise, key=lambda r: -(r.get("spend") or 0)),
+        "emerging": sorted(emerging, key=lambda r: -(r.get("spend") or 0)),
+        "fading": sorted(fading, key=lambda r: -(r.get("spend") or 0)),
+        "filtered_count": len(noise),
+        "filtered_spend": round(sum(r.get("spend") or 0 for r in noise), 2),
+        "agent_promoted": promoted,
+        "agent_demoted": demoted,
+    }
+
+
+async def build(
+    api, ctx: T.CartContext, orders, goal: str | None = None,
+    tolerance: Any = pricing.DEFAULT_TOLERANCE,
+    classifier=None,
+) -> dict[str, Any]:
+    """Складає план наступної покупки: профіль, фільтр шуму, знахідки.
+
+    `tolerance` — ціновий поріг гостя з налаштувань. Він фільтрує кожну
+    альтернативу ще до того, як та потрапить у знахідки.
+    """
+    search = AlternativeSearch(api, ctx, tolerance)
     if not orders:
         return {"has_data": False, "reason": "Чеків Сільпо поки не знайшли"}
 
@@ -256,8 +556,31 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     period_days = (
         max((orders[0].created_at - orders[-1].created_at).days, 1) if len(orders) > 1 else 7
     )
-    rows = _aggregate(orders)
+    # Звичка живе на рівні ВИДУ товару, не марки: «беру сир щотижня» —
+    # а моцарела чи сулугуні залежить від того, що трапилось на полиці.
+    # Без цього одна сильна звичка розсипалась на два десятки слабких.
+    rows = kinds.group(_aggregate(orders))
     split = noise_filter.split(rows, receipts=len(orders), period_days=period_days)
+
+    # Тютюн і алкоголь лишаємо в аналітиці витрат, але прибираємо звідси:
+    # радити марку стиків, прив'язану до чужого пристрою, безглуздо.
+    # Модель бачить УСІХ кандидатів — і тих, кого скрипт відсіяв
+    if classifier is not None:
+        try:
+            verdicts = await classifier(
+                split["basket"] + split["noise"], period_days,
+                orders[0].created_at.date().isoformat(),
+            )
+            split = _merge_verdicts(split, verdicts)
+        except Exception:  # noqa: BLE001 — модель необовʼязкова
+            pass
+
+    skipped = [
+        r for r in split["basket"]
+        if cats.categorize(r.get("name") or "") in cats.NO_RECOMMENDATION
+    ]
+    split["basket"] = [r for r in split["basket"] if r not in skipped]
+
     if not split["basket"]:
         return {"has_data": False, "reason": "У чеках немає товарів, які повторюються"}
 
@@ -268,12 +591,17 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     # --- деталі товарів набору: ціна зараз, склад, алергени ---
     plan: list[PlanItem] = []
     products: dict[str, ProductInfo] = {}
-    for row in split["basket"][:12]:
-        try:
-            payload = await api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(row["slug"]))
-        except Exception:  # noqa: BLE001
-            continue
-        if T.is_mcp_error(payload):
+    # Картки товарів незалежні одна від одної — тягнемо їх разом.
+    # Це найдорожча частина побудови: двадцять із гаком послідовних
+    # викликів по 0.6 с перетворювались на чверть усього часу.
+    wanted = split["basket"][:12]
+    fetched = await asyncio.gather(
+        *(api.call(T.GET_PRODUCT_DETAILS, ctx.product_args(r["slug"])) for r in wanted),
+        return_exceptions=True,
+    )
+
+    for row, payload in zip(wanted, fetched):
+        if isinstance(payload, BaseException) or T.is_mcp_error(payload):
             continue
         product = parse_product(payload, fallback_slug=row["slug"], fallback_title=row["name"] or "")
         products[row["slug"]] = product
@@ -288,6 +616,10 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             image=product.image or row.get("image"), price=product.price or 0,
             quantity=per_cycle, category=cats.categorize(product.title),
             times_bought=row["times"], kind=row["kind"], kind_reason=row["kind_reason"],
+            habit=row.get("habit"),
+            kind_key=row.get("kind_key"), kind_brands=row.get("kind_brands", 1),
+            loyalty=row.get("loyalty"), brand_indifferent=bool(row.get("brand_indifferent")),
+            kind_note=kinds.describe(row), members=row.get("members") or [],
             cadence=cadence, cadence_label=cadence_label, cycle_days=cycle_days,
             on_promotion=product.on_promotion, old_price=product.old_price,
             saved=product.discount,
@@ -323,9 +655,16 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             "allergens_text": product.allergens_text,
             "brand": product.brand,
             "country": product.country,
+            # Вага потрібна, щоб зводити БЖВ по масі, а не середнім по товарах.
+            # Цукор і сіль каталог Сільпо майже ніколи не віддає — тоді None,
+            # і в інтерфейсі буде чесне «даних немає», а не нуль.
+            "weight_g": product.weight_g,
             "nutrition": {
                 "kcal": product.nutrition.energy_kcal, "protein": product.nutrition.protein,
                 "fat": product.nutrition.fat, "carbs": product.nutrition.carbs,
+                "sugar": product.nutrition.sugar, "salt": product.nutrition.salt,
+                "saturated_fat": product.nutrition.saturated_fat,
+                "fiber": product.nutrition.fiber,
             },
             "allergen_check": (
                 "Конфліктів із вашим профілем не знайдено" if not hits
@@ -345,55 +684,72 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
     ]
     for row in blocked:
         product = products.get(row.slug)
-        if product is None or not budget.take():
+        if product is None:
             continue
-        alternatives = await _find_alternatives(api, ctx, product, [product.title])
-        safe = None
-        for candidate, saving in alternatives:
-            if not al.blocking(al.check_product(candidate, restrictions)):
-                safe = (candidate, saving)
-                break
+        alternatives = await search.get(product, _search_queries(product))
+        if alternatives is None:
+            continue
+        # Алерген — не питання смаку. Якщо чистого варіанта в межах порогу немає,
+        # чесніше показати дорожчий і прямо це позначити, ніж не показати нічого.
+        safe = _first_safe(alternatives.within, restrictions)
+        over_threshold = False
+        if safe is None:
+            safe = _first_safe(alternatives.over, restrictions)
+            over_threshold = safe is not None
         if safe:
-            candidate, saving = safe
-            row.alternative = {
-                "slug": candidate.slug, "product_id": candidate.product_id,
-                "name": candidate.title, "price": candidate.price, "image": candidate.image,
-                "saved": saving, "on_promotion": candidate.on_promotion,
-                "why": "без вашого алергену",
-            }
+            candidate, saving, verified = safe
+            row.alternative = _alt_dict(
+                candidate, saving,
+                "склад перевірено — вашого алергену немає" if verified
+                else "склад не вказано в каталозі — перевірте на упаковці",
+                over_threshold=over_threshold,
+            )
     if blocked:
         found = sum(1 for b in blocked if b.alternative)
+        unverified = sum(
+            1 for b in blocked
+            if b.alternative and not b.alternative.get("composition_known")
+        )
+        detail = "У складі знайдено те, що ви вказали в профілі Сільпо як алерген"
+        if unverified:
+            detail += (
+                f". Для {unverified} заміни каталог не дає складу — "
+                "ми це прямо позначили, а не видали за перевірку"
+            )
         findings.append(Finding(
             kind="safety",
             title=f"{len(blocked)} позиції з вашим алергеном",
-            value=f"{found} безпечні заміни" if found else "перевірте склад",
-            detail="У складі знайдено те, що ви вказали в профілі Сільпо як алерген",
+            value=f"{found} заміни знайдено" if found else "перевірте склад",
+            detail=detail,
             slugs=[b.slug for b in blocked],
         ))
 
     # --- 🎯 заміни за вподобанням із профілю (цукор у солодких напоях тощо) ---
     for row in preference_swaps:
         product = products.get(row.slug)
-        if product is None or row.alternative or not budget.take():
+        if product is None or row.alternative:
             continue
         rule = match_rule(product)
-        queries = rule.queries if rule else [product.title]
-        alternatives = await _find_alternatives(api, ctx, product, queries)
-        clean = [
-            (c, s_)
-            for c, s_ in alternatives
-            if not al.check_product(c, restrictions)
-        ]
-        if not clean:
+        queries = rule.queries if rule else _search_queries(product)
+        alternatives = await search.get(product, queries)
+        if alternatives is None:
             continue
-        best, saving = max(clean, key=lambda x: x[1])
+        clean = [p for p in alternatives.within if not al.check_product(p[0], restrictions)]
+        if not clean:
+            # Варіанти є, але дорожчі за поріг. Самі не підставляємо — ховаємо
+            # під «показати ще варіанти», щоб рішення лишилось за гостем.
+            row.alternatives_over = [
+                _alt_dict(c, s_, "поза вашим ціновим порогом", over_threshold=True)
+                for c, s_ in alternatives.over
+                if not al.check_product(c, restrictions)
+            ][:2]
+            continue
+        best, saving = clean[0]     # вже відсортовано: спершу ціна, потім користь
         row.action = ACTION_SWITCH
-        row.alternative = {
-            "slug": best.slug, "product_id": best.product_id, "name": best.title,
-            "price": best.price, "image": best.image, "saved": saving,
-            "on_promotion": best.on_promotion,
-            "why": f"відповідає вашому «{row.allergen_hits[0]['restriction'].lower()}»",
-        }
+        row.alternative = _alt_dict(
+            best, saving,
+            f"відповідає вашому «{row.allergen_hits[0]['restriction'].lower()}»",
+        )
     matched_swaps = [p for p in preference_swaps if p.alternative]
     if matched_swaps:
         findings.append(Finding(
@@ -422,25 +778,72 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             slugs=[p.slug for p in promos],
         ))
 
+    # --- 🔁 марка байдужа → пропонуємо ту, що зараз в акції ---
+    # Якщо гість щоразу бере інший сир, «замінити моцарелу на сулугуні» —
+    # не заміна, а просто інша марка того самого. І якщо вона дешевша чи
+    # в акції, це найкорисніша порада, яку ми взагалі можемо дати.
+    brand_swaps: list[PlanItem] = []
+    for row in plan:
+        if not row.brand_indifferent or row.alternative or row.action == ACTION_BLOCKED:
+            continue
+        product = products.get(row.slug)
+        if product is None:
+            continue
+        alternatives = await search.get(product, [row.kind_key or product.title])
+        if alternatives is None:
+            break
+        # Цінність тут — саме ЗНИЖКА на іншу марку, а не те, що вона дешевша
+        # за звичну. Але й дорожчати не має: акційний сир за 449 ₴ замість
+        # звичних 70 ₴ — це не порада, хоч знижка там і 280 ₴.
+        safe = [
+            p for p in alternatives.within
+            if p[0].on_promotion and p[1] >= 0
+            and not al.check_product(p[0], restrictions)
+            and _same_product_kind(product, p[0])
+        ]
+        if not safe:
+            continue
+        # Найбільша знижка серед тих, що вкладаються в звичну ціну
+        best, saving = max(safe, key=lambda p: p[0].discount)
+        row.action = ACTION_SWITCH
+        row.alternative = _alt_dict(
+            best, saving,
+            f"ви берете {row.kind_key} різних марок — ця зараз зі знижкою "
+            f"{round(best.discount)} ₴",
+        )
+        brand_swaps.append(row)
+
+    if brand_swaps:
+        total = sum((r.alternative or {}).get("saved", 0) * r.quantity for r in brand_swaps)
+        findings.append(Finding(
+            kind="brand",
+            title=f"{len(brand_swaps)} види, де марка вам не принципова",
+            value=f"−{round(total)} ₴" if total > 0 else "є акційні",
+            detail=(
+                "Ви берете ці товари різних марок — отже марка не є частиною "
+                "звички. Показуємо ту, що зараз вигідніша"
+            ),
+            slugs=[r.slug for r in brand_swaps],
+        ))
+
     # --- 🥗 одна конкретна зміна на краще ---
     health = _health_candidate(
         [p.as_dict() for p in plan if p.action == ACTION_KEEP and not p.alternative], products
     )
     health_slug: str | None = None
-    if health and budget.take():
+    if health:
         _weight, product, rule, _item = health
-        alternatives = await _find_alternatives(api, ctx, product, rule.queries)
-        safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]
+        alternatives = await search.get(product, rule.queries)
+        safe = (
+            [p for p in alternatives.within if not al.check_product(p[0], restrictions)]
+            if alternatives else []
+        )
         if safe:
-            best, saving = max(safe, key=lambda x: x[1])
+            best, saving = safe[0]
             row = next((p for p in plan if p.slug == product.slug), None)
             if row is not None:
                 row.action = ACTION_SWITCH
-                row.alternative = {
-                    "slug": best.slug, "product_id": best.product_id, "name": best.title,
-                    "price": best.price, "image": best.image, "saved": saving,
-                    "on_promotion": best.on_promotion, "why": rule.reason,
-                }
+                row.alternative = _alt_dict(best, saving, rule.reason)
                 row.note = rule.title.lower()
                 health_slug = row.slug
                 price_note = (
@@ -468,23 +871,21 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         product = products.get(row.slug)
         if product is None or not product.price or product.price < 30:
             continue
-        if not budget.take():
+        alternatives = await search.get(product, _search_queries(product))
+        if alternatives is None:
             break
         checked += 1
-        alternatives = await _find_alternatives(api, ctx, product, [product.title])
-        safe = [(c, s) for c, s in alternatives if not al.check_product(c, restrictions)]
+        safe = [p for p in alternatives.within if not al.check_product(p[0], restrictions)]
         if not safe:
             continue
-        best, saving = max(safe, key=lambda x: x[1])
+        best, saving = safe[0]
         if saving < MIN_SAVING:
             continue
         row.action = ACTION_REVIEW
         row.note = f"є аналог на {round(saving)} ₴ дешевше"
-        row.alternative = {
-            "slug": best.slug, "product_id": best.product_id, "name": best.title,
-            "price": best.price, "image": best.image, "saved": saving,
-            "on_promotion": best.on_promotion, "why": "той самий товар, дешевше",
-        }
+        # Пошук іде за маркою й головним іменником, тож це схожий товар тієї
+        # самої ролі, а не буквально та сама позиція. Формулюємо чесно.
+        row.alternative = _alt_dict(best, saving, "схожий товар, дешевше")
         cheaper.append(row)
 
     if cheaper:
@@ -493,18 +894,49 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             kind="alternative",
             title=f"{len(cheaper)} вигідніші аналоги",
             value=f"−{round(total)} ₴",
-            detail="Той самий товар, але дешевше",
+            detail="Та сама роль у кошику, але дешевше",
             slugs=[r.slug for r in cheaper],
         ))
 
-    # --- 🧹 звіт про відсіяний шум ---
-    if split["filtered_count"]:
+    # --- 🌱 нове у кошику: ще не звичка, але вже не випадковість ---
+    emerging = split.get("emerging") or []
+    if emerging:
         findings.append(Finding(
-            kind="noise",
-            title=f"Відсіяно {split['filtered_count']} випадкові позиції",
-            value=f"{round(split['filtered_spend'])} ₴",
-            detail="Разові покупки не входять у звичний набір",
-            slugs=[r["slug"] for r in split["noise"][:8]],
+            kind="emerging",
+            title=f"{len(emerging)} нових товари у вашому кошику",
+            value="стежимо",
+            detail=(
+                "Ви взяли їх нещодавно кілька разів поспіль. Це ще не ритм — "
+                "подивимось, чи повторяться"
+            ),
+            slugs=[r["slug"] for r in emerging[:6]],
+        ))
+
+    # --- 🕰️ звичка, яка обірвалась ---
+    fading = split.get("fading") or []
+    if fading:
+        findings.append(Finding(
+            kind="fading",
+            title=f"{len(fading)} позиції випали зі звички",
+            value="давно не брали",
+            detail="Раніше купували регулярно, а останнім часом ні. Можливо, просто забулось",
+            slugs=[r["slug"] for r in fading[:6]],
+        ))
+
+    # --- 💸 що саме приховав ціновий поріг ---
+    # Показуємо це явно: інакше налаштування лишається невидимим, а гість не
+    # розуміє, чому варіантів мало.
+    hidden = sum(len(p.alternatives_over) for p in plan)
+    if hidden:
+        findings.append(Finding(
+            kind="threshold",
+            title=f"{hidden} варіанти приховано ціновим порогом",
+            value=pricing.describe(tolerance),
+            detail=(
+                "Вони дорожчі за вашу межу. Поріг змінюється в налаштуваннях, "
+                "а самі варіанти видно в картці товару"
+            ),
+            slugs=[p.slug for p in plan if p.alternatives_over],
         ))
 
     active = [p for p in plan if p.action != ACTION_BLOCKED]
@@ -525,6 +957,17 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             {"name": r["name"], "spend": round(r["spend"], 2), "reason": r["kind_reason"]}
             for r in split["noise"][:10]
         ],
+        "emerging": [
+            {"name": r["name"], "slug": r["slug"], "spend": round(r["spend"], 2),
+             "reason": r["kind_reason"], "habit": r.get("habit")}
+            for r in emerging[:6]
+        ],
+        "fading": [
+            {"name": r["name"], "slug": r["slug"], "spend": round(r["spend"], 2),
+             "reason": r["kind_reason"], "habit": r.get("habit")}
+            for r in fading[:6]
+        ],
+        "habit_showcase": habit_showcase(split),
         "summary": {
             "items": len(active),
             "blocked": len(blocked),
@@ -538,7 +981,13 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
             "preference_swaps": len(matched_swaps),
             "filtered_count": split["filtered_count"],
             "filtered_spend": split["filtered_spend"],
+            "skipped_categories": len(skipped),
+            "agent_promoted": split.get("agent_promoted", 0),
+            "agent_demoted": split.get("agent_demoted", 0),
             "based_on_weeks": round(weeks, 1),
             "receipts": len(orders),
+            "price_tolerance": pricing.normalize(tolerance),
+            "price_tolerance_label": pricing.describe(tolerance),
+            "hidden_by_threshold": hidden,
         },
     }

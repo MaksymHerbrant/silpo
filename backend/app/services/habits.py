@@ -15,6 +15,8 @@ silpo_get_my_online_orders у більшості гостей порожній (
 """
 from __future__ import annotations
 
+import asyncio
+
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
@@ -26,7 +28,7 @@ from app.nutrition.parser import ProductInfo, parse_product, parse_weight_grams
 from app.nutrition.score import score_basket, score_product
 
 PAGE_SIZE = 10          # жорсткий максимум silpo_get_my_offline_orders
-MAX_ORDERS = 20
+MAX_ORDERS = 150         # стеля на випадок дуже активного акаунта
 MAX_DETAIL_SLUGS = 22
 
 # Маркери категорій для «звичок» — за назвою товару (каталог не віддає категорію)
@@ -93,20 +95,90 @@ def parse_orders(payload: Any) -> list[OfflineOrder]:
     return orders
 
 
-async def fetch_offline_orders(api, ctx: T.CartContext, limit: int = MAX_ORDERS) -> list[OfflineOrder]:
-    """Чеки з пагінацією: MCP віддає максимум 10 за виклик."""
-    orders: list[OfflineOrder] = []
-    for offset in range(0, limit, PAGE_SIZE):
-        payload = await api.call(
-            T.GET_OFFLINE_ORDERS, ctx.as_args(limit=PAGE_SIZE, offset=offset)
-        )
+# Читання чеків ВІКНАМИ ПО ДАТАХ, а не однією пагінацією.
+#
+# silpo_get_my_offline_orders за замовчуванням дивиться лише 6 місяців, а на
+# широкому діапазоні обрізає total до 20. Перевірено наживо на акаунті з
+# трирічною історією:
+#
+#   dateStart=2021 (широко)     total=20   ← обрізано
+#   2026-06-01 → 2026-09-11     total=21
+#   2026-01-01 → 2026-05-31     total=14
+#   2025-01-01 → 2025-12-31     total=10
+#   2023-01-01 → 2024-12-31     total=7
+#
+# Вузьке вікно віддає справжню кількість. Тому йдемо кварталами назад — так
+# доступна вся історія, а не останні півроку.
+WINDOW_DAYS = 90
+MAX_WINDOWS = 12                  # ~3 роки назад
+EMPTY_WINDOWS_TO_STOP = 3         # три порожні квартали поспіль — історія скінчилась
+
+
+async def _window(api, ctx: T.CartContext, start: datetime, end: datetime) -> list[OfflineOrder]:
+    """Усі чеки одного вікна, з пагінацією всередині нього."""
+    found: list[OfflineOrder] = []
+    for offset in range(0, 60, PAGE_SIZE):
+        payload = await api.call(T.GET_OFFLINE_ORDERS, ctx.as_args(
+            limit=PAGE_SIZE, offset=offset,
+            dateStart=start.strftime("%Y-%m-%dT00:00:00"),
+            dateEnd=end.strftime("%Y-%m-%dT23:59:59"),
+        ))
         if T.is_mcp_error(payload):
             break
         page = parse_orders(payload)
-        orders.extend(page)
+        found.extend(page)
         if len(page) < PAGE_SIZE:
             break
-    return orders
+    return found
+
+
+# Скільки вікон читаємо одночасно. Вікна незалежні, тож послідовність тут
+# нічого не давала — лише 12 × 0.75 с очікування.
+WINDOW_BATCH = 4
+
+
+async def fetch_offline_orders(api, ctx: T.CartContext, limit: int = MAX_ORDERS) -> list[OfflineOrder]:
+    """Історія покупок на всю доступну глибину, вікнами по кварталу.
+
+    Вікна читаємо пачками паралельно: вони не залежать одне від одного, а
+    рання зупинка все одно спрацьовує — просто на межі пачки, а не вікна.
+    """
+    orders: list[OfflineOrder] = []
+    seen: set[tuple] = set()
+    end = datetime.now()
+    empty_streak = 0
+    window = 0
+
+    while window < MAX_WINDOWS:
+        ranges = []
+        for _ in range(min(WINDOW_BATCH, MAX_WINDOWS - window)):
+            start = end - timedelta(days=WINDOW_DAYS)
+            ranges.append((start, end))
+            end = start - timedelta(days=1)
+            window += 1
+
+        pages = await asyncio.gather(
+            *(_window(api, ctx, a, b) for a, b in ranges), return_exceptions=True
+        )
+
+        added_in_batch = 0
+        for page in pages:
+            if isinstance(page, BaseException):
+                continue
+            for order in page:
+                key = (order.created_at.isoformat(), round(order.total, 2))
+                if key in seen:
+                    continue
+                seen.add(key)
+                orders.append(order)
+                added_in_batch += 1
+
+        empty_streak = empty_streak + 1 if added_in_batch == 0 else 0
+        if empty_streak >= 1 or len(orders) >= limit:
+            break
+
+    orders.sort(key=lambda o: o.created_at, reverse=True)
+    return orders[:limit]
 
 
 async def load_details_for(api, ctx: T.CartContext, slugs: list[str]) -> dict[str, ProductInfo]:

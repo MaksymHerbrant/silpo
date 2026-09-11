@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+
 from datetime import date
 from typing import Any
 
@@ -21,35 +23,37 @@ from app.nutrition.targets import age_from_birthday
 
 
 async def load(api) -> dict[str, Any]:
-    """Збирає профіль гостя з трьох tools MCP. Помилка окремого не критична."""
+    """Збирає профіль гостя з трьох tools MCP — одним заходом, не по черзі.
+
+    Виклики незалежні: ім'я, обмеження й склад родини ніяк не пов'язані.
+    Помилка окремого не критична — просто та частина лишається порожньою.
+    """
     profile: dict[str, Any] = {}
     restrictions: list[al.Restriction] = []
     family: dict[str, Any] = {}
 
-    try:
-        payload = await api.call(T.GET_MY_PROFILE, {})
-        if not T.is_mcp_error(payload) and isinstance(payload, dict):
-            profile = payload.get("profile") or {}
-    except Exception:  # noqa: BLE001
-        pass
+    raw_profile, raw_restrictions, raw_family = await asyncio.gather(
+        api.call(T.GET_MY_PROFILE, {}),
+        api.call(T.GET_FOOD_RESTRICTIONS, {}),
+        api.call(T.GET_MY_FAMILY, {}),
+        return_exceptions=True,
+    )
 
-    try:
-        payload = await api.call(T.GET_FOOD_RESTRICTIONS, {})
-        if not T.restrictions_are_empty(payload):
-            restrictions = al.parse_restrictions(payload)
-    except Exception:  # noqa: BLE001
-        pass
+    if not isinstance(raw_profile, BaseException) and not T.is_mcp_error(raw_profile):
+        if isinstance(raw_profile, dict):
+            profile = raw_profile.get("profile") or {}
 
-    try:
-        payload = await api.call(T.GET_MY_FAMILY, {})
-        if not T.is_mcp_error(payload) and isinstance(payload, dict):
+    if not isinstance(raw_restrictions, BaseException):
+        if not T.restrictions_are_empty(raw_restrictions):
+            restrictions = al.parse_restrictions(raw_restrictions)
+
+    if not isinstance(raw_family, BaseException) and not T.is_mcp_error(raw_family):
+        if isinstance(raw_family, dict):
             family = {
-                "children": len(payload.get("children") or []),
-                "pets": len(payload.get("pets") or []),
-                "members": len(payload.get("members") or []),
+                "children": len(raw_family.get("children") or []),
+                "pets": len(raw_family.get("pets") or []),
+                "members": len(raw_family.get("members") or []),
             }
-    except Exception:  # noqa: BLE001
-        pass
 
     birthday = profile.get("birthday")
     return {
@@ -57,7 +61,12 @@ async def load(api) -> dict[str, Any]:
         "age": age_from_birthday(birthday) if birthday else None,
         "gender": profile.get("gender"),
         "restrictions": [
-            {"slug": r.slug, "label": r.label, "triggers": list(r.triggers)}
+            {
+                "slug": r.slug, "label": r.label, "triggers": list(r.triggers),
+                # allergen блокує завжди; preference лише пропонує заміну —
+                # і лише в категоріях, де обмеження є суттю продукту
+                "kind": r.kind,
+            }
             for r in restrictions
         ],
         "restriction_objects": restrictions,     # для внутрішнього використання

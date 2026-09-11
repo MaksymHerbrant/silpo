@@ -52,11 +52,17 @@ class Settings(BaseSettings):
 
     # --- Режими ---
     # demo_mode=true => MCP підмінюється фікстурами (для офлайн-розробки UI)
+    # Фоновий дайджест. Вимкнено за замовчуванням: локальна розробка й
+    # тести не мають нічого нікому слати.
+    enable_digest: bool = False
     demo_mode: bool = False
     cors_origins: str = "*"
 
     # --- Rate limiting для MCP ---
-    mcp_min_interval_ms: int = 250      # затримка між викликами tools/call
+    # Скільки викликів MCP тримаємо в польоті одночасно. 1 = стара
+    # послідовна поведінка. Вище 6 не варто: починаються 429.
+    mcp_concurrency: int = 4
+    mcp_min_interval_ms: int = 90       # мінімальний інтервал між СТАРТАМИ
     mcp_max_retries: int = 5
     mcp_backoff_base_ms: int = 500
 

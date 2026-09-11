@@ -56,5 +56,40 @@ export const api = {
 
   insights: (refresh = false) => request(`/insights/overview?refresh=${refresh}`),
 
+  settings: () => request('/settings'),
+  saveSettings: (values) =>
+    request('/settings', { method: 'PUT', body: JSON.stringify(values) }),
+
+  // Кошик застосунку: збирається з усіх екранів, у MCP летить один раз
+  cart: () => request('/cart'),
+  cartAdd: (item) => request('/cart/items', { method: 'POST', body: JSON.stringify(item) }),
+  cartQuantity: (id, quantity) =>
+    request(`/cart/items/${id}`, { method: 'PATCH', body: JSON.stringify({ quantity }) }),
+  cartRemove: (id) => request(`/cart/items/${id}`, { method: 'DELETE' }),
+  cartCheckout: () => request('/cart/checkout', { method: 'POST', timeoutMs: 90000 }),
+  cartRating: () => request('/cart/rating'),
+
+  nutrition: (period = 'week', refresh = false) =>
+    request(`/nutrition/summary?period=${period}&refresh=${refresh}`),
+
+  // Цикли покупок і стеження за цінами
+  reminders: () => request('/reminders'),
+  setReminder: (slug, values) =>
+    request(`/reminders/${encodeURIComponent(slug)}`, {
+      method: 'PUT', body: JSON.stringify(values),
+    }),
+  priceDrops: () => request('/price-drops'),
+
+  // Метрика: скільки пропозицій прийнято і скільки це в гривнях
+  coupons: () => request('/coupons'),
+  logout: () => request('/auth/silpo/disconnect', { method: 'POST' }),
+
+  liveActivity: () => request('/live/activity'),
+
+  metrics: () => request('/metrics'),
+  decide: (id, accepted) =>
+    request(`/decisions/${id}`, { method: 'POST', body: JSON.stringify({ accepted }) }),
+  sendDigest: () => request('/reminders/digest', { method: 'POST' }),
+
   mcpLog: (limit = 60) => request(`/debug/mcp-log?limit=${limit}`),
 }

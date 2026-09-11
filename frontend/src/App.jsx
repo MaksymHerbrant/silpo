@@ -1,34 +1,90 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { api, login } from './lib/api'
+import { CartProvider, useCart } from './lib/cart'
 import { initTelegram, notify, WebApp } from './lib/telegram'
-import Checkout from './screens/Checkout'
-import Done from './screens/Done'
+import TabBar from './components/TabBar'
+import Onboarding from './onboarding/Onboarding'
 import CardDetail from './screens/CardDetail'
+import Cart from './screens/Cart'
 import Dashboard from './screens/Dashboard'
-import ItemDetail from './screens/ItemDetail'
+import Home from './screens/Home'
+import LiveData from './screens/LiveData'
+import Done from './screens/Done'
 import Insights from './screens/Insights'
+import ItemDetail from './screens/ItemDetail'
+import Nutrition from './screens/Nutrition'
+import Promotions from './screens/Promotions'
+import Settings from './screens/Settings'
 import ShoppingPlan from './screens/ShoppingPlan'
 import SilpoConnect from './screens/SilpoConnect'
 
-/**
- * Потік без опитувань: гість заходить — і одразу бачить знахідки.
- * Історія покупок → знахідки → план → дія (кошик або список).
- */
+/** Зовнішня оболонка: лише сесія і підключення Сільпо. */
 export default function App() {
   const [state, setState] = useState({ status: 'boot' })
-  const [screen, setScreen] = useState('home')
-  const [plan, setPlan] = useState(null)
-  const [insights, setInsights] = useState(null)
-  const [chosen, setChosen] = useState({})
-  const [busy, setBusy] = useState(false)
-  const [done, setDone] = useState(null)
-  const [sheet, setSheet] = useState(null)   // {type:'card'|'item', key}
-  const poll = useRef(null)
 
   useEffect(() => { initTelegram() }, [])
+
+  const boot = useCallback(async () => {
+    try {
+      const session = await login()
+      setState({
+        status: session.silpo_connected ? 'ready' : 'connect',
+        user: session.user,
+      })
+    } catch (e) {
+      setState({ status: 'error', message: e.message })
+    }
+  }, [])
+
+  useEffect(() => { boot() }, [boot])
+
+  if (state.status === 'boot') {
+    return <div className="center"><div className="spinner" />Вмикаємось…</div>
+  }
+  if (state.status === 'error') {
+    return (
+      <div className="center">
+        <p style={{ color: 'var(--ink)' }}>Щось пішло не так</p>
+        <p className="muted" style={{ marginTop: 8 }}>{state.message}</p>
+        <button className="btn ghost" style={{ marginTop: 18, maxWidth: 240 }} onClick={boot}>
+          Спробувати ще раз
+        </button>
+      </div>
+    )
+  }
+  if (state.status === 'connect') return <SilpoConnect user={state.user} onConnected={boot} />
+
+  return (
+    <CartProvider>
+      <Main user={state.user} />
+    </CartProvider>
+  )
+}
+
+/**
+ * Застосунок: п'ять табів плюс екрани-надбудови.
+ * Кошик спільний — товар із будь-якого таба лягає в один список.
+ */
+function Main({ user }) {
+  const [tab, setTab] = useState('home')
+  const [over, setOver] = useState(null)   // 'plan' | 'insights' | 'live' | 'done'
+  const [plan, setPlan] = useState(null)
+  const [insights, setInsights] = useState(null)
+  const [settings, setSettings] = useState(null)
+  const [chosen, setChosen] = useState({})
+  const [sheet, setSheet] = useState(null)        // {type:'card'|'item', key}
+  const [busy, setBusy] = useState(false)
+  const [done, setDone] = useState(null)
+  const poll = useRef(null)
+  const { cart, add, setCart, reload } = useCart()
+
   useEffect(() => () => clearInterval(poll.current), [])
 
-  /** План будується у фоні до хвилини — опитуємо, поки building=true. */
+  /**
+   * Збережений план приходить одразу — опитуємо, ЛИШЕ поки він будується.
+   * Просто відкрити застосунок більше не означає перечитати всі чеки:
+   * перебудова відбувається за тапом «оновити» або коли зʼявився новий чек.
+   */
   const loadPlan = useCallback((refresh = false) => {
     clearInterval(poll.current)
     let tries = 0
@@ -44,14 +100,12 @@ export default function App() {
               i.slug,
               {
                 selected: i.selected,
-                // Заблоковану позицію одразу показуємо з безпечною заміною
                 useAlternative: i.action === 'blocked' && Boolean(i.alternative),
               },
             ]),
           ))
         }
       } catch (e) {
-        // Мережа моргнула — пробуємо ще. Але не вічно.
         if (tries > 40) {
           clearInterval(poll.current)
           setPlan({ has_data: false, reason: e.message })
@@ -62,51 +116,69 @@ export default function App() {
     poll.current = setInterval(tick, 2500)
   }, [])
 
-  const boot = useCallback(async () => {
-    try {
-      const session = await login()
-      if (!session.silpo_connected) {
-        setState({ status: 'connect', user: session.user })
-        return
-      }
-      setState({ status: 'ready', user: session.user })
-      loadPlan()
-      api.insights().then(setInsights).catch(() => {})
-    } catch (e) {
-      setState({ status: 'error', message: e.message })
-    }
-  }, [loadPlan])
+  useEffect(() => {
+    api.settings().then(setSettings).catch(() => setSettings({ onboarded: true }))
+  }, [])
 
-  useEffect(() => { boot() }, [boot])
+  // Дані вантажимо лише після онбордингу — інакше гість чекає намарно
+  useEffect(() => {
+    if (!settings?.onboarded) return
+    loadPlan()
+    api.insights().then(setInsights).catch(() => {})
+  }, [settings?.onboarded, loadPlan])
 
-  const selectedItems = (plan?.items || [])
-    .filter((i) => chosen[i.slug]?.selected)
-    .map((i) => {
-      const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
-      return {
-        product_id: alt ? alt.product_id : i.product_id,
-        quantity: i.quantity,
-        name: alt ? alt.name : i.name,
-      }
-    })
-
-  const selectedTotal = (plan?.items || [])
-    .filter((i) => chosen[i.slug]?.selected)
-    .reduce((sum, i) => {
-      const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
-      return sum + (alt ? alt.price : i.price) * i.quantity
-    }, 0)
-
-  async function toCart() {
+  async function saveSettings(values) {
     setBusy(true)
     try {
-      const result = await api.planToCart(selectedItems)
+      const saved = await api.saveSettings(values)
+      setSettings(saved)
+      loadPlan(true)
+    } catch (e) {
+      WebApp.showAlert?.(`Не вдалось зберегти: ${e.message}`)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  /** Обране в списку плану переїздить у спільний кошик — і гість бачить його в табі. */
+  async function planToCart() {
+    const picked = (plan?.items || []).filter((i) => chosen[i.slug]?.selected)
+    if (!picked.length) return
+    setBusy(true)
+    try {
+      for (const i of picked) {
+        const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
+        await add({
+          product_id: alt ? alt.product_id : i.product_id,
+          slug: alt ? alt.slug : i.slug,
+          name: alt ? alt.name : i.name,
+          image: alt ? alt.image : i.image,
+          price: alt ? alt.price : i.price,
+          quantity: i.quantity,
+          source: 'plan',
+        })
+      }
+      notify('success')
+      setOver(null)
+      setTab('cart')
+    } catch (e) {
+      WebApp.showAlert?.(e.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function checkout() {
+    setBusy(true)
+    try {
+      const result = await api.cartCheckout()
+      setCart({ items: [], count: 0, positions: 0, total: 0 })
       notify('success')
       setDone({ mode: 'cart', result })
-      setScreen('done')
+      setOver('done')
     } catch (e) {
       notify('error')
-      WebApp.showAlert?.(`Не вдалось створити кошик: ${e.message}`)
+      WebApp.showAlert?.(`Не вдалось надіслати кошик: ${e.message}`)
     } finally {
       setBusy(false)
     }
@@ -115,9 +187,11 @@ export default function App() {
   async function toList() {
     setBusy(true)
     try {
-      const list = await api.planToList(selectedItems)
+      const list = await api.planToList(cart.items.map((i) => ({
+        product_id: i.product_id, quantity: i.quantity, name: i.name,
+      })))
       setDone({ mode: 'list', list })
-      setScreen('done')
+      setOver('done')
     } catch (e) {
       WebApp.showAlert?.(e.message)
     } finally {
@@ -125,100 +199,33 @@ export default function App() {
     }
   }
 
-  if (state.status === 'boot') return <div className="center"><div className="spinner" />Вмикаємось…</div>
-  if (state.status === 'error') {
-    return (
-      <div className="center">
-        <p style={{ color: 'var(--ink)' }}>Щось пішло не так</p>
-        <p className="muted" style={{ marginTop: 8 }}>{state.message}</p>
-        <button className="btn ghost" style={{ marginTop: 18, maxWidth: 240 }} onClick={boot}>
-          Спробувати ще раз
-        </button>
-      </div>
-    )
-  }
-  if (state.status === 'connect') return <SilpoConnect user={state.user} onConnected={boot} />
-
-  if (screen === 'insights') return <Insights data={insights} onBack={() => setScreen('home')} />
-
-  const openItemFromPlan = (slug) => setSheet({ type: 'item', key: slug })
-
-  if (screen === 'plan') {
-    return (
-      <>
-      <ShoppingPlan
-        plan={plan}
-        chosen={chosen}
-        onToggle={(slug) => setChosen((c) => ({
-          ...c, [slug]: { ...c[slug], selected: !c[slug]?.selected },
-        }))}
-        onSwitch={(slug) => setChosen((c) => ({
-          ...c, [slug]: { ...c[slug], useAlternative: !c[slug]?.useAlternative },
-        }))}
-        onOpenItem={openItemFromPlan}
-        onBack={() => setScreen('home')}
-        onNext={() => setScreen('checkout')}
-      />
-      {sheet?.type === 'item' && (
-        <ItemDetail
-          item={(plan?.items || []).find((i) => i.slug === sheet.key)}
-          chosen={chosen[sheet.key]}
-          onSwitch={(slug) => setChosen((c) => ({
-            ...c, [slug]: { ...c[slug], selected: true, useAlternative: !c[slug]?.useAlternative },
-          }))}
-          onClose={() => setSheet(null)}
-        />
-      )}
-      </>
-    )
-  }
-
-  if (screen === 'checkout') {
-    return (
-      <Checkout
-        count={selectedItems.length}
-        total={selectedTotal}
-        busy={busy}
-        onCart={toCart}
-        onList={toList}
-        onBack={() => setScreen('plan')}
-      />
-    )
-  }
-
-  if (screen === 'done' && done) {
-    return (
-      <Done
-        mode={done.mode}
-        result={done.result}
-        list={done.list}
-        onBack={() => setScreen('plan')}
-        onHome={() => { setScreen('home'); loadPlan(true) }}
-      />
-    )
+  async function logout() {
+    setBusy(true)
+    try {
+      await api.logout()
+      window.location.reload()
+    } catch (e) {
+      WebApp.showAlert?.(e.message)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const openItem = (slug) => setSheet({ type: 'item', key: slug })
+  const openSettings = () => { setOver(null); setTab('settings') }
   const switchAlt = (slug) => setChosen((c) => ({
     ...c, [slug]: { ...c[slug], selected: true, useAlternative: !c[slug]?.useAlternative },
   }))
 
-  return (
+  const sheets = (
     <>
-      <Dashboard
-        plan={plan}
-        building={plan?.building}
-        onOpenCard={(kind) => setSheet({ type: 'card', key: kind })}
-        onOpenItem={openItem}
-        onOpenPlan={() => setScreen('plan')}
-        onRefresh={() => loadPlan(true)}
-      />
       {sheet?.type === 'card' && (
         <CardDetail
-          kind={sheet.key}
-          plan={plan}
+          kind={sheet.key} plan={plan}
           onClose={() => setSheet(null)}
           onOpenItem={openItem}
+          onOpenSettings={openSettings}
+          onSwitch={switchAlt}
         />
       )}
       {sheet?.type === 'item' && (
@@ -226,9 +233,114 @@ export default function App() {
           item={(plan?.items || []).find((i) => i.slug === sheet.key)}
           chosen={chosen[sheet.key]}
           onSwitch={switchAlt}
+          onOpenSettings={() => { setSheet(null); openSettings() }}
           onClose={() => setSheet(null)}
         />
       )}
+    </>
+  )
+
+  // --- онбординг: два тапи, обидва можна пропустити ---
+  if (settings && !settings.onboarded) {
+    return (
+      <Onboarding
+        settings={settings}
+        name={user?.first_name}
+        onDone={(values) => saveSettings(values)}
+      />
+    )
+  }
+  if (!settings) return <div className="center"><div className="spinner" />Вмикаємось…</div>
+
+  // --- екрани-надбудови поверх табів ---
+  if (over === 'done' && done) {
+    return (
+      <Done
+        mode={done.mode} result={done.result} list={done.list}
+        onBack={() => { setOver(null); setTab('cart') }}
+        onHome={() => { setOver(null); setTab('analytics'); reload(); loadPlan() }}
+      />
+    )
+  }
+  if (over === 'plan') {
+    return (
+      <>
+        <ShoppingPlan
+          plan={plan} chosen={chosen}
+          onToggle={(slug) => setChosen((c) => ({
+            ...c, [slug]: { ...c[slug], selected: !c[slug]?.selected },
+          }))}
+          onSwitch={(slug) => setChosen((c) => ({
+            ...c, [slug]: { ...c[slug], useAlternative: !c[slug]?.useAlternative },
+          }))}
+          onOpenItem={openItem}
+          onOpenSettings={openSettings}
+          onBack={() => setOver(null)}
+          onNext={planToCart}
+          busy={busy}
+        />
+        {sheets}
+      </>
+    )
+  }
+  if (over === 'insights') {
+    return <Insights data={insights} onBack={() => setOver(null)} />
+  }
+  if (over === 'live') {
+    return <LiveData onBack={() => setOver(null)} />
+  }
+
+  const screens = {
+    home: (
+      <Home
+        plan={plan}
+        onOpenPlan={() => setOver('plan')}
+        onOpenOpportunity={(kind) => setSheet({ type: 'card', key: kind })}
+        onOpenInsights={() => setTab('analytics')}
+        onRefresh={() => loadPlan(true)}
+      />
+    ),
+    nutrition: (
+      <Nutrition
+        plan={plan} onOpenItem={openItem}
+        chosen={chosen} onSwitch={switchAlt}
+      />
+    ),
+    promos: <Promotions plan={plan} onOpenItem={openItem} onOpenSettings={openSettings} />,
+    analytics: (
+      <Dashboard
+        plan={plan}
+        insights={insights}
+        onOpenInsights={() => setOver('insights')}
+        onRefresh={() => loadPlan(true)}
+      />
+    ),
+    cart: (
+      <Cart
+        busy={busy}
+        onCheckout={checkout}
+        onList={toList}
+        onOpenNutrition={() => setTab('nutrition')}
+      />
+    ),
+    settings: (
+      <Settings
+        settings={settings}
+        restrictions={plan?.profile?.restrictions || []}
+        busy={busy}
+        onSave={saveSettings}
+        onLogout={logout}
+        onOpenLive={() => setOver('live')}
+        onOpenNutrition={() => setTab('nutrition')}
+      />
+    ),
+  }
+
+  return (
+    <>
+      {screens[tab]}
+      <TabBar active={tab} onChange={(t) => { setSheet(null); setTab(t) }} />
+      {sheets}
     </>
   )
 }

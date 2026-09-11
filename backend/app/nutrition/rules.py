@@ -52,10 +52,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="sugary_drink",
         title="Солодкий газований напій",
-        queries=[
-            "Напій Coca-Cola Zero", "Напій Pepsi Max", "Напій Coca-Cola Light",
-            "Чай холодний без цукру", "Сік 100% без цукру", "Напій без цукру газований",
-        ],
+        queries=["Cola", "Пепсі", "Чай холодний", "Лимонад"],
         reason="той самий смак і газованість, але без цукру",
         match=lambda p: p.is_liquid and not p.is_alcohol and _carbs(p) >= 4,
         priority=95,
@@ -64,7 +61,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="energy_drink",
         title="Енергетик",
-        queries=["Напій енергетичний без цукру", "Напій енергетичний zero", "Кава холодна без цукру"],
+        queries=["Енергетик", "Кава", "Чай холодний"],
         reason="той самий ефект, але без цукру",
         match=lambda p: p.is_liquid and _name_has(p, "energy", "енергетич", "red bull", "monster"),
         priority=96,
@@ -73,7 +70,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="juice_nectar",
         title="Сік або нектар із цукром",
-        queries=["Сік 100% без цукру", "Сік прямого віджиму", "Нектар без цукру"],
+        queries=["Сік", "Нектар", "Смузі"],
         reason="той самий сік, але без доданого цукру",
         match=lambda p: p.is_liquid and _name_has(p, "нектар", "сік", "морс") and _carbs(p) >= 7,
         priority=85,
@@ -82,10 +79,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="sweet_snack",
         title="Солодкий снек",
-        queries=[
-            "Печиво вівсяне без цукру", "Батончик злаковий без цукру",
-            "Фрукти сушені без цукру", "Чорний шоколад 70%", "Горіхи волоські",
-        ],
+        queries=["Печиво", "Батончик", "Шоколад", "Горіхи", "Вафлі"],
         reason="той самий формат снеку, але менше цукру",
         match=lambda p: not p.is_liquid and _carbs(p) >= 40 and _kcal(p) >= 300
         and _name_has(p, "шоколад", "цукерк", "печив", "вафл", "батончик", "круасан",
@@ -96,8 +90,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="chips",
         title="Чіпси й солоні снеки",
-        queries=["Чіпси рисові", "Чіпси яблучні", "Попкорн солоний", "Кукурудзяні палички",
-                 "Хлібці цільнозернові", "Сухарики житні"],
+        queries=["Чіпси", "Попкорн", "Хлібці", "Сухарики", "Крекер"],
         reason="той самий хрусткий снек, але менше жиру",
         match=lambda p: not p.is_liquid and _kcal(p) >= 400
         and _name_has(p, "чіпс", "сухарик", "снек", "крекер", "палички солоні"),
@@ -107,7 +100,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="white_bakery",
         title="Випічка з білого борошна",
-        queries=["Хліб цільнозерновий", "Хліб житній", "Хлібці цільнозернові", "Лаваш тонкий"],
+        queries=["Хліб", "Хлібці", "Лаваш"],
         reason="цільне зерно замість білого борошна",
         match=lambda p: not p.is_liquid and _carbs(p) >= 40
         and _name_has(p, "булк", "багет", "батон", "хліб білий", "бургер", "тост"),
@@ -117,7 +110,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="processed_meat",
         title="Ковбасні вироби",
-        queries=["Філе куряче охолоджене", "Індичка філе", "Тунець консервований у власному соку"],
+        queries=["Курка", "Індичка", "Тунець", "Філе"],
         reason="більше білка, менше жиру й солі",
         match=lambda p: not p.is_liquid
         and _name_has(p, "ковбас", "сосиск", "салямі", "бекон", "шинк", "паштет", "сарделн"),
@@ -127,8 +120,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="sweet_dairy",
         title="Солодкий молочний продукт",
-        queries=["Йогурт грецький без цукру", "Йогурт натуральний без цукру",
-                 "Сир кисломолочний без добавок"],
+        queries=["Йогурт", "Сир", "Кефір"],
         reason="без доданого цукру, більше білка",
         match=lambda p: _name_has(p, "йогурт", "сирок", "десерт молоч", "пудинг", "глазурован")
         and _carbs(p) >= 10,
@@ -138,7 +130,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="alcohol",
         title="Алкоголь",
-        queries=["Пиво безалкогольне", "Сидр безалкогольний", "Напій безалкогольний без цукру"],
+        queries=["Пиво безалкогольне", "Безалкогольне", "Квас"],
         reason="той самий напій, але без алкоголю",
         match=lambda p: p.is_alcohol,
         priority=60,
@@ -147,7 +139,7 @@ RULES: list[SwapRule] = [
     SwapRule(
         key="high_energy_density",
         title="Дуже калорійний товар",
-        queries=["Йогурт грецький без цукру", "Сир кисломолочний 5%", "Хлібці цільнозернові"],
+        queries=["Йогурт", "Сир", "Хлібці"],
         reason="менша калорійність на 100 г",
         match=lambda p: not p.is_liquid and _kcal(p) >= 450 and _protein(p) < 12,
         priority=40,

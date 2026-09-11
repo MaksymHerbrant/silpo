@@ -9,7 +9,7 @@ from app.db import repo
 from app.mcp import tools as T
 from app.mcp.gateway import silpo
 from app.security.session import current_user_id
-from app.services import habits, insights, jobs
+from app.services import cache, habits, insights, jobs, pipeline
 from app.services.cart_analysis import fetch_cart
 
 router = APIRouter(tags=["insights"])
@@ -33,13 +33,24 @@ async def _load(user_id: str, builder) -> dict[str, Any]:
 async def overview(
     refresh: bool = False, user_id: str = Depends(current_user_id)
 ) -> dict[str, Any]:
-    """Дзеркало покупок: гроші, топ товарів, категорії, динаміка по тижнях."""
+    """Дзеркало покупок: гроші, топ товарів, категорії, динаміка по тижнях.
+
+    Збережений результат віддається миттєво. Перечитувати чеки лише тому, що
+    гість повернувся в застосунок, ми не будемо — це та сама відповідь за
+    десяток викликів MCP.
+    """
     if refresh:
         jobs.invalidate("insights", user_id)
         jobs.reset_failures("insights", user_id)
+    else:
+        row = await cache.load(user_id, "insights")
+        if row and row.get("payload"):
+            return {**row["payload"], "cached": True, "built_at": row.get("built_at")}
 
     async def builder(api, ctx, orders, goal_row):
-        return await insights.build(api, ctx, orders, goal_row.get("goal"))
+        result = await insights.build(api, ctx, orders, goal_row.get("goal"))
+        await cache.store(user_id, "insights", None, result)
+        return result
 
     factory = await _load(user_id, builder)
     return await jobs.cached_or_start("insights", user_id, factory)

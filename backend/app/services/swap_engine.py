@@ -19,6 +19,7 @@ from app.mcp import tools as T
 from app.nutrition.parser import ProductInfo, parse_product
 from app.nutrition.rules import SwapRule, match_rule
 from app.nutrition.score import ScoredItem, score_product
+from app.services import pricing
 
 MIN_GAIN = 10               # мінімальний приріст балів, щоб пропонувати заміну
 MAX_TARGETS = 5             # скільки проблемних товарів опрацьовуємо за раз
@@ -47,6 +48,7 @@ async def find_candidates(
     rule: SwapRule,
     product=None,
     restrictions: list[str] | None = None,
+    tolerance: Any = pricing.DEFAULT_TOLERANCE,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     """Кандидати на заміну: спершу запити від AI, потім статичні з правила.
 
@@ -59,7 +61,9 @@ async def find_candidates(
     ai = None
     queries = list(rule.queries)
     if product is not None:
-        max_price = (product.price or 0) * rule.max_price_ratio if product.price else None
+        # Правило і поріг гостя обмежують ціну разом — перемагає суворіший
+        ratio = pricing.combine(rule.max_price_ratio, tolerance)
+        max_price = (product.price or 0) * ratio if product.price else None
         ai = await advisor.swap_queries(product, restrictions or [], max_price)
         if ai:
             queries = ai["queries"] + queries
@@ -78,8 +82,9 @@ async def best_replacement(
     promo_slugs: set[str],
     product=None,
     restrictions: list[str] | None = None,
+    tolerance: Any = pricing.DEFAULT_TOLERANCE,
 ) -> tuple[ProductInfo, ScoredItem, float, dict[str, Any] | None] | None:
-    candidates, ai = await find_candidates(api, ctx, rule, product, restrictions)
+    candidates, ai = await find_candidates(api, ctx, rule, product, restrictions, tolerance)
     seen: set[str] = set()
     best: tuple[float, ProductInfo, ScoredItem] | None = None
 
@@ -105,8 +110,10 @@ async def best_replacement(
         gain = scored.score - target.score
         if gain < MIN_GAIN:
             continue
-        # Заміна не має бути помітно дорожчою — інакше її просто не куплять
-        if target.price and info.price and info.price > target.price * rule.max_price_ratio:
+        # Ціна — критерій №1: поріг гостя відсікає кандидата раніше за все інше
+        if not pricing.is_within(
+            target.price, info.price, pricing.combine(rule.max_price_ratio, tolerance) - 1.0
+        ):
             continue
         rank = (
             gain
@@ -158,6 +165,7 @@ async def build(
     ctx: T.CartContext,
     targets: list[tuple[ScoredItem, dict[str, Any]]],
     restrictions: list[str] | None = None,
+    tolerance: Any = pricing.DEFAULT_TOLERANCE,
 ) -> list[dict[str, Any]]:
     """targets — пари (оцінений товар, контекст: скільки разів куплено / чи в кошику)."""
     prioritized = [t for t in targets if t[0].score is not None]
@@ -176,6 +184,7 @@ async def build(
         found = await best_replacement(
             api, ctx, target, rule, promos,
             product=meta.get("product"), restrictions=restrictions or [],
+            tolerance=tolerance,
         )
         if not found:
             continue

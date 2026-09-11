@@ -1,0 +1,60 @@
+# Один сервіс на все: FastAPI віддає і API, і статику Mini App.
+#
+# Так немає CORS, не потрібен другий домен, і — головне — адреса перестає
+# ротуватись. Саме через плаваючу адресу тунелю новий користувач не міг
+# повернутись у застосунок після OAuth: посилання в BotFather заморожене
+# на момент реєстрації /newapp.
+services:
+  - type: web
+    name: greencart
+    runtime: python
+    plan: free
+    region: frankfurt
+    branch: main
+    # Фронтенд збирається тут же: бекенд шукає frontend/dist поруч із собою
+    buildCommand: |
+      set -e
+      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
+      npm --prefix frontend ci
+      npm --prefix frontend run build
+      pip install -r backend/requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.0"
+      # PUBLIC_BACKEND_URL має збігатися з адресою сервісу: з нього будується
+      # redirect_uri для OAuth Сільпо, і DCM перереєструється сам при зміні.
+      - key: PUBLIC_BACKEND_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
+      - key: TELEGRAM_WEBAPP_SHORT_NAME
+        sync: false
+      - key: TELEGRAM_WEBHOOK_SECRET
+        generateValue: true
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: gemini
+      - key: GEMINI_MODEL
+        value: gemini-3.1-flash-lite
+      - key: DEMO_MODE
+        value: "false"
+      - key: ENABLE_DIGEST
+        value: "false"
+      - key: MCP_CONCURRENCY
+        value: "4"
+      - key: MCP_MIN_INTERVAL_MS
+        value: "90"

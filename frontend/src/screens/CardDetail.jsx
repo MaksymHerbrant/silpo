@@ -1,10 +1,41 @@
 import Sheet from '../components/Sheet'
 
 /** Деталізація смарт-картки з головного екрана. */
-export default function CardDetail({ kind, plan, onClose, onOpenItem }) {
-  const { profile, findings = [], items = [], noise = [], summary = {} } = plan || {}
+export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSettings, onSwitch }) {
+  const { profile, findings = [], items = [], noise = [], summary = {},
+          emerging = [], fading = [] } = plan || {}
   const finding = findings.find((f) => f.kind === kind)
   const related = items.filter((i) => finding?.slugs?.includes(i.slug))
+
+  if (kind === 'threshold') {
+    return (
+      <Sheet title="Приховано ціновим порогом" onClose={onClose}>
+        <p className="muted">
+          Ви поставили межу «{summary.price_tolerance_label}». Ці варіанти її
+          перевищують, тому ми їх не підставляємо — але й не ховаємо від вас.
+        </p>
+        {related.map((i) => (
+          <div className="card plain" key={i.slug}>
+            <div className="kv">
+              <span className="k">Замість «{i.name}»</span>
+              <span className="v">{Math.round(i.price)} ₴</span>
+            </div>
+            {(i.alternatives_over || []).map((o) => (
+              <div className="over-item" key={o.slug}>
+                <span>{o.name}</span>
+                <span className="op">{Math.round(o.price)} ₴</span>
+              </div>
+            ))}
+          </div>
+        ))}
+        {onOpenSettings && (
+          <button className="btn ghost" onClick={() => { onClose(); onOpenSettings() }}>
+            Змінити ціновий поріг
+          </button>
+        )}
+      </Sheet>
+    )
+  }
 
   if (kind === 'profile') {
     return (
@@ -59,6 +90,72 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem }) {
             </div>
           ))}
         </div>
+      </Sheet>
+    )
+  }
+
+  if (kind === 'emerging' || kind === 'fading') {
+    const rows = kind === 'emerging' ? emerging : fading
+    return (
+      <Sheet title={kind === 'emerging' ? 'Нове у вашому кошику' : 'Випало зі звички'} onClose={onClose}>
+        <p className="muted">
+          {kind === 'emerging'
+            ? 'Ви взяли ці товари кілька разів поспіль за короткий час. Це ще не ритм — ми не кладемо їх у звичний набір, поки покупки не повторяться в різні тижні.'
+            : 'Раніше ви брали це регулярно, а останнім часом ні. Ми не наполягаємо — просто помітили.'}
+        </p>
+        {rows.map((r) => (
+          <div className="card plain" key={r.slug}>
+            <div className="kv">
+              <span className="k">{r.name}</span>
+              <span className="v">{Math.round(r.spend)} ₴</span>
+            </div>
+            <p className="over-note">{r.reason}</p>
+          </div>
+        ))}
+      </Sheet>
+    )
+  }
+
+  if (kind === 'safety') {
+    return (
+      <Sheet title="Позиції з вашим алергеном" onClose={onClose}>
+        <p className="muted">{finding?.detail}</p>
+        {related.map((i) => (
+          <div className="card plain" key={i.slug}>
+            <button className="offer-body" onClick={() => { onClose(); onOpenItem(i.slug) }}>
+              <span className="offer-name">{i.name}</span>
+              <span className="plan-meta">
+                {(i.allergen_hits || []).filter((h) => h.action === 'block').map((h, n) => (
+                  <span key={n}>{h.restriction}</span>
+                ))}
+              </span>
+            </button>
+            {i.alternative ? (
+              <>
+                <div className="kv" style={{ marginTop: 8 }}>
+                  <span className="k">Заміна: {i.alternative.name}</span>
+                  <span className="v">{Math.round(i.alternative.price)} ₴</span>
+                </div>
+                {i.alternative.composition_known === false && (
+                  <p className="over-note" style={{ color: 'var(--money)', fontWeight: 600 }}>
+                    ⚠️ Каталог не публікує склад цієї заміни — прочитайте його на упаковці.
+                  </p>
+                )}
+                <button
+                  className="btn"
+                  style={{ marginTop: 10 }}
+                  onClick={() => { onSwitch?.(i.slug); onClose() }}
+                >
+                  Замінити на цей варіант
+                </button>
+              </>
+            ) : (
+              <p className="over-note">
+                Безпечної заміни в каталозі не знайшли. Ми не пропонуємо навмання.
+              </p>
+            )}
+          </div>
+        ))}
       </Sheet>
     )
   }

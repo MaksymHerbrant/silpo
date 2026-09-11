@@ -10,7 +10,7 @@ from app.db import repo
 from app.mcp import tools as T
 from app.mcp.gateway import silpo
 from app.security.session import current_user_id
-from app.services import habits, jobs, plan as plan_service
+from app.services import jobs, pipeline
 from app.services.cart_analysis import fetch_cart
 
 router = APIRouter(tags=["plan"])
@@ -29,21 +29,7 @@ class ApplyIn(BaseModel):
 @router.get("/plan")
 async def get_plan(refresh: bool = False, user_id: str = Depends(current_user_id)) -> dict[str, Any]:
     """Знахідки агента + план покупки. Довга операція йде у фон із кешем."""
-    if refresh:
-        jobs.invalidate("plan_next", user_id)
-        jobs.reset_failures("plan_next", user_id)
-
-    goal_row = await repo.get_goal(user_id) or {}
-
-    async def _factory() -> dict[str, Any]:
-        async with silpo(user_id) as api:
-            ctx, _cart, meta = await fetch_cart(api)
-            if ctx is None:
-                return {"has_data": False, "reason": meta.get("reason", "Дані Сільпо недоступні")}
-            orders = await habits.fetch_offline_orders(api, ctx)
-            return await plan_service.build(api, ctx, orders, goal_row.get("goal"))
-
-    return await jobs.cached_or_start("plan_next", user_id, _factory)
+    return await pipeline.ensure_plan(user_id, refresh=refresh)
 
 
 @router.post("/plan/cart")

@@ -9,6 +9,10 @@
 """
 from __future__ import annotations
 
+import logging
+from dataclasses import replace
+from datetime import UTC, datetime
+
 from dataclasses import asdict
 from typing import Any
 
@@ -18,6 +22,9 @@ from app.mcp.gateway import silpo
 from app.nutrition import allergens as al
 from app.nutrition.parser import ProductInfo, parse_product
 from app.nutrition.score import ScoredItem, score_basket, score_product
+
+
+log = logging.getLogger("cart")
 
 
 async def fetch_cart(api) -> tuple[T.CartContext | None, list[dict[str, Any]], dict[str, Any]]:
@@ -33,7 +40,60 @@ async def fetch_cart(api) -> tuple[T.CartContext | None, list[dict[str, Any]], d
 
     ctx = T.cart_context(cart_payload, str(cart_id))
     products = T.cart_products(cart_payload)
+    ctx = await ensure_fresh_slot(api, ctx)
     return ctx, products, {"raw_cart": cart_payload}
+
+
+def _slot_expired(ctx: T.CartContext) -> bool:
+    try:
+        start = datetime.fromisoformat(str(ctx.timeslot_start).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return True
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=UTC)
+    return start < datetime.now(UTC)
+
+
+async def ensure_fresh_slot(api, ctx: T.CartContext | None) -> T.CartContext | None:
+    """Замінює протермінований таймслот кошика на найближчий доступний.
+
+    Це найшкідливіший зі знайдених нами багів Сільпо: зі старим слотом
+    silpo_find_products_batch МОВЧКИ повертає нуль результатів. Не помилку —
+    просто порожньо. Перевірено: той самий запит «Яблука» дає 0 зі слотом
+    чотириденної давнини і 2 зі свіжим.
+
+    Через це порожніли одразу три речі: акції, альтернативи й рекомендації.
+    """
+    if ctx is None or not _slot_expired(ctx):
+        return ctx
+    try:
+        payload = await api.call(
+            T.GET_TIME_SLOTS,
+            {"branchId": ctx.branch_id, "deliveryType": ctx.delivery_type},
+        )
+    except Exception:  # noqa: BLE001 — без слотів працюємо як є
+        return ctx
+    if T.is_mcp_error(payload) or not isinstance(payload, dict):
+        return ctx
+
+    slots = payload.get("slots") or payload.get("timeSlots") or []
+    now = datetime.now(UTC)
+    for slot in slots:
+        if not slot.get("available"):
+            continue
+        start, end = slot.get("start"), slot.get("end")
+        if not start or not end:
+            continue
+        try:
+            when = datetime.fromisoformat(str(start).replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if when < now:
+            continue
+        log.info("таймслот кошика протермінований — беру свіжий %s", start)
+        return replace(ctx, timeslot_start=start, timeslot_end=end,
+                       delivery_type=slot.get("deliveryType") or ctx.delivery_type)
+    return ctx
 
 
 async def load_details(api, ctx: T.CartContext, slugs: list[str]) -> dict[str, ProductInfo]:
