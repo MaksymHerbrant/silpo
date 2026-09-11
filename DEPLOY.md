@@ -29,6 +29,7 @@ python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().d
 | Поле | Значення |
 |---|---|
 | Language | Python 3 |
+| Python Version | `3.12.8` — див. нижче |
 | Branch | `main` |
 | Root Directory | *порожньо* |
 | Build Command | `pip install -r backend/requirements.txt` |
@@ -48,6 +49,21 @@ python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().d
 | `PUBLIC_BACKEND_URL` | **адреса сервісу Render** — див. крок 3 |
 
 3. Перший деплой впаде на `PUBLIC_BACKEND_URL`, якщо його ще немає. Це нормально.
+
+### Якщо збірка падає на `pydantic-core`
+
+Render за замовчуванням бере найновіший Python (зараз 3.14), для якого ще
+немає готових колес `pydantic-core`. Pip намагається зібрати його з Rust і
+падає на read-only файловій системі.
+
+У репозиторії лежить `.python-version` з `3.12.8` — Render має його підхопити.
+Якщо сервіс створений до цього коміту, додай змінну вручну:
+
+```
+PYTHON_VERSION=3.12.8
+```
+
+і запусти **Manual Deploy → Clear build cache & deploy**.
 
 ## 3. Прив'язка адреси
 

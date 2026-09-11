@@ -20,8 +20,12 @@ services:
     healthCheckPath: /health
     autoDeploy: true
     envVars:
+      # 3.12 — остання версія, для якої ГАРАНТОВАНО є готові колеса всіх
+      # залежностей. На 3.14 (дефолт Render) pydantic-core немає у вигляді
+      # колеса, pip лізе збирати його з Rust і падає на read-only ФС.
+      # Дублюється у .python-version, щоб працювало і при ручному створенні.
       - key: PYTHON_VERSION
-        value: "3.13.0"
+        value: "3.12.8"
       # PUBLIC_BACKEND_URL має збігатися з адресою сервісу: з нього будується
       # redirect_uri для OAuth Сільпо, і DCM перереєструється сам при зміні.
       - key: PUBLIC_BACKEND_URL
