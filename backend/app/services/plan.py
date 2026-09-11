@@ -407,12 +407,21 @@ def _aggregate(orders) -> list[dict[str, Any]]:
         day = order.created_at.date().isoformat()
         for line in order.items:
             slug = line.get("slug")
-            if not slug:
+            name = (line.get("name") or "").strip()
+            if not slug and not name:
                 continue
-            row = rows.setdefault(slug, {
+
+            # Позиція без catalogProduct (товар знято з продажу або не
+            # зматчився) раніше мовчки викидалась. Так ми втрачали реальні
+            # покупки: в одному чеку тестувальника так зникли три товари з
+            # шістнадцяти, серед них пластівці, які він бере постійно.
+            # Такий товар не можна покласти в кошик, але він ОБОВʼЯЗКОВО
+            # має рахуватись у звичках.
+            key = slug or f"noslug:{name.lower()}"
+            row = rows.setdefault(key, {
                 "slug": slug, "name": line.get("name"), "times": 0, "total_qty": 0.0,
                 "spend": 0.0, "image": line.get("image"), "history": [], "_days": set(),
-                "lines": 0,
+                "lines": 0, "no_catalog": not slug,
             })
             qty = float(line.get("quantity") or 1)
             price = float(line.get("price") or 0)
@@ -427,6 +436,9 @@ def _aggregate(orders) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in rows.values():
         days = row.pop("_days")
+        if row.get("no_catalog") and not row.get("slug"):
+            # Стабільний ключ, щоб інтерфейс не падав на None
+            row["slug"] = f"noslug:{(row.get('name') or '').lower()[:60]}"
         row["times"] = len(days)          # походів у магазин, а не рядків
         row["days"] = sorted(days)
         out.append(row)
