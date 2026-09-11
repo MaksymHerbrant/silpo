@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import APIRouter, HTTPException, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
 from app.config import get_settings
@@ -16,6 +16,38 @@ from app.services import cache, jobs
 from fastapi import Depends
 
 router = APIRouter(tags=["auth"])
+
+log = logging.getLogger("auth")
+
+
+def _oauth_error_page(title: str, detail: str) -> HTMLResponse:
+    """Сторінка помилки OAuth у зовнішньому браузері.
+
+    Її бачать у Safari чи Chrome, а не всередині Telegram, тому вона має
+    сама пояснити, що сталось, і повернути людину в застосунок.
+    """
+    s = get_settings()
+    back = (
+        f"https://t.me/{s.telegram_bot_username}/{s.telegram_webapp_short_name}"
+        if s.telegram_bot_username else "https://t.me"
+    )
+    return HTMLResponse(
+        status_code=400,
+        content=f"""<!doctype html><html lang="uk"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{title}</title><style>
+body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#f4f2f0;
+color:#1e1a19;font:16px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}}
+.card{{max-width:420px;margin:24px;padding:28px;background:#fff;border-radius:18px;
+box-shadow:0 1px 2px rgba(30,26,25,.06),0 10px 30px rgba(30,26,25,.07)}}
+h1{{margin:0 0 12px;font-size:22px;line-height:1.25}}
+p{{margin:0 0 22px;color:#5c5350}}
+a{{display:block;padding:15px;border-radius:14px;background:#d81e22;color:#fff;
+text-align:center;text-decoration:none;font-weight:700}}
+</style></head><body><div class="card">
+<h1>{title}</h1><p>{detail}</p><a href="{back}">Повернутись у GreenCart</a>
+</div></body></html>""",
+    )
 
 
 class TelegramAuthIn(BaseModel):
@@ -114,11 +146,34 @@ async def silpo_callback(code: str | None = None, state: str | None = None, erro
 
     saved = await repo.consume_oauth_state(state)
     if not saved:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Невалідний або протухлий state")
+        # Голий 400 у зовнішньому браузері виглядає як поломка застосунку.
+        # Пояснюємо людською мовою й даємо дорогу назад.
+        return _oauth_error_page(
+            "Спроба входу застаріла",
+            "Посилання для входу живе 30 хвилин, а це вже старе — або ви вже "
+            "увійшли в іншій вкладці. Поверніться в застосунок і спробуйте ще раз.",
+        )
 
-    data = await oauth.exchange_code(code, saved["code_verifier"])
+    try:
+        data = await oauth.exchange_code(code, saved["code_verifier"])
+    except Exception as exc:  # noqa: BLE001 — гість має бачити пояснення, не трейс
+        log.warning("обмін code на токени не вдався: %s", exc)
+        return _oauth_error_page(
+            "Сільпо не завершило вхід",
+            "Спробуйте ще раз за хвилину. Якщо повториться — перевірте, "
+            "що входите в той самий акаунт Сільпо.",
+        )
+
     if "access_token" not in data:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "Відповідь token endpoint без access_token")
+        # Повторний колбек: токени вже збережені з першого разу
+        existing = await repo.get_tokens(saved["user_id"])
+        if existing:
+            startapp = await repo.issue_startapp_token(saved["user_id"])
+            return RedirectResponse(oauth.miniapp_return_url(startapp), status_code=302)
+        return _oauth_error_page(
+            "Сільпо не видало доступ",
+            "Відповідь без токена. Спробуйте підключитись ще раз із застосунку.",
+        )
 
     await repo.save_tokens(
         saved["user_id"],

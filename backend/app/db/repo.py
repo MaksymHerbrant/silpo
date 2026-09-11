@@ -35,18 +35,40 @@ async def save_oauth_state(user_id: str, code_verifier: str, redirect_uri: str) 
             "code_verifier": code_verifier,
             "redirect_uri": redirect_uri,
             "created_at": _now(),
-            "expires_at": (datetime.now(UTC) + timedelta(minutes=10)).isoformat(),
+            # 30 хвилин, а не 10: вхід відбувається в ЗОВНІШНЬОМУ браузері —
+            # людина вводить телефон, чекає SMS, іноді відволікається.
+            # Десяти хвилин вистачало на щасливий шлях і не вистачало на живий.
+            "expires_at": (datetime.now(UTC) + timedelta(minutes=30)).isoformat(),
         },
     )
     return state
 
 
+# Скільки часу повторний колбек із тим самим state вважаємо тим самим
+# входом. Браузер уміє повторювати редіректи, а людина — тиснути «назад».
+REPLAY_WINDOW = timedelta(minutes=5)
+
+
 async def consume_oauth_state(state: str) -> dict[str, Any] | None:
+    """Забирає state під обмін на токени.
+
+    Повертає рядок і вдруге, якщо колбек прилетів повторно протягом кількох
+    хвилин: інакше оновлення сторінки або кнопка «назад» у браузері давали
+    гостю «невалідний state» замість успішного входу.
+    """
     row = await db().select_one("silpo_oauth_states", {"state": state})
-    if not row or row.get("consumed_at"):
+    if not row:
         return None
     if datetime.fromisoformat(row["expires_at"]) < datetime.now(UTC):
         return None
+
+    consumed = row.get("consumed_at")
+    if consumed:
+        when = datetime.fromisoformat(consumed)
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=UTC)
+        return row if datetime.now(UTC) - when <= REPLAY_WINDOW else None
+
     await db().update("silpo_oauth_states", {"state": state}, {"consumed_at": _now()})
     return row
 
