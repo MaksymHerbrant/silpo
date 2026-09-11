@@ -1,11 +1,14 @@
+# Версії зафіксовано за робочим оточенням: requirements відставав від
+# реальності (стояв pydantic 2.10.4, тоді як mcp 2.2.0 тягне 2.13+), і
+# чиста установка падала з ResolutionImpossible ще до запуску.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
-pydantic==2.10.4
+pydantic==2.13.5
 pydantic-settings==2.7.0
 httpx==0.28.1
-httpx2>=0.29
+httpx2==2.12.0
 python-dotenv==1.0.1
 cryptography==44.0.0
-mcp>=2.2.0
-anthropic>=0.69
+mcp==2.2.0
+anthropic==1.4.0
 PyJWT==2.10.1
