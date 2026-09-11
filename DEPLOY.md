@@ -3,6 +3,15 @@
 Одним сервісом: FastAPI віддає і API, і зібраний фронтенд. Адреса перестає
 ротуватись — саме через це новий користувач не міг повернутись після OAuth.
 
+## 0. Перед пушем — перезібрати фронтенд
+
+`frontend/dist` лежить у репозиторії навмисно: так Render не залежить від
+наявності Node. Після будь-якої зміни інтерфейсу:
+
+```bash
+npm --prefix frontend run build && git add frontend/dist && git commit -m "збірка фронтенду"
+```
+
 ## 1. Підготовка
 
 Згенеруй ключ шифрування токенів, якщо його ще немає:
@@ -15,6 +24,17 @@ python3 -c "from cryptography.fernet import Fernet;print(Fernet.generate_key().d
 
 1. **render.com → New → Blueprint**, вкажи репозиторій — Render підхопить `render.yaml`.
    (Або New → Web Service вручну з командами з `render.yaml`.)
+Якщо створюєш вручну (New → **Web Service**), поля такі:
+
+| Поле | Значення |
+|---|---|
+| Language | Python 3 |
+| Branch | `main` |
+| Root Directory | *порожньо* |
+| Build Command | `pip install -r backend/requirements.txt` |
+| Start Command | `uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend` |
+| Health Check Path | `/health` |
+
 2. Заповни змінні, позначені `sync: false`:
 
 | Змінна | Звідки взяти |

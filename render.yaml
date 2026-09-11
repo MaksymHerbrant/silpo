@@ -12,12 +12,10 @@ services:
     region: frankfurt
     branch: main
     # Фронтенд збирається тут же: бекенд шукає frontend/dist поруч із собою
-    buildCommand: |
-      set -e
-      curl -fsSL https://deb.nodesource.com/setup_20.x | bash - || true
-      npm --prefix frontend ci
-      npm --prefix frontend run build
-      pip install -r backend/requirements.txt
+    # Фронтенд збирається локально й лежить у репозиторії (frontend/dist),
+    # тому тут лише Python. Це прибирає залежність від Node у середовищі
+    # Render — один із найчастіших способів зламати деплой на демо.
+    buildCommand: pip install -r backend/requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --app-dir backend
     healthCheckPath: /health
     autoDeploy: true
