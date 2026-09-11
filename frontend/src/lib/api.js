@@ -68,6 +68,9 @@ export const api = {
   cartRemove: (id) => request(`/cart/items/${id}`, { method: 'DELETE' }),
   cartCheckout: () => request('/cart/checkout', { method: 'POST', timeoutMs: 90000 }),
   cartRating: () => request('/cart/rating'),
+  silpoCart: () => request('/cart/silpo', { timeoutMs: 60000 }),
+  importSilpoCart: () =>
+    request('/cart/silpo/import', { method: 'POST', timeoutMs: 60000 }),
 
   nutrition: (period = 'week', refresh = false) =>
     request(`/nutrition/summary?period=${period}&refresh=${refresh}`),

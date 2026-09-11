@@ -662,3 +662,5 @@ h3 { margin: 0; font-size: 15px; font-weight: 700; }
 }
 .pick + .pick { border-left: 1px solid var(--rule); }
 .pick.on { background: var(--brand); color: #fff; }
+
+.tag.money { background: var(--money-soft); color: var(--money); }

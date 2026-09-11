@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import AddToCartButton from '../components/AddToCartButton'
 import Screen from '../components/Screen'
 import { api } from '../lib/api'
 import { useCart } from '../lib/cart'
@@ -15,8 +16,22 @@ const SOURCE_LABEL = {
 }
 
 export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
-  const { cart, setQuantity, remove } = useCart()
+  const { cart, setQuantity, remove, add, setCart } = useCart()
   const [badge, setBadge] = useState(null)
+  const [silpo, setSilpo] = useState(null)
+  const [pulling, setPulling] = useState(false)
+
+  // Кошик Сільпо читаємо наживо: він змінюється незалежно від застосунку
+  useEffect(() => {
+    let alive = true
+    api.silpoCart().then((r) => { if (alive) setSilpo(r) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  async function pullFromSilpo() {
+    setPulling(true)
+    try { setCart(await api.importSilpoCart()) } finally { setPulling(false) }
+  }
 
   // Рейтинг пасивний: перераховується сам, нічого не питає і нічого не блокує
   useEffect(() => {
@@ -28,16 +43,82 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
     return () => { alive = false }
   }, [cart.items])
 
+  const silpoBlock = silpo?.available && silpo.count > 0 && (
+    <div className="card">
+      <div className="section-row">
+        <h3>Уже у вашому кошику Сільпо</h3>
+        <span className="muted">{silpo.count} · {Math.round(silpo.total)} ₴</span>
+      </div>
+      {silpo.items.slice(0, 5).map((i) => (
+        <div className="hist-row" key={i.product_id || i.name}>
+          <span>{i.quantity}× {i.name}</span>
+          <span className="d">{Math.round(i.price)} ₴</span>
+        </div>
+      ))}
+      <button className="btn ghost" style={{ marginTop: 12 }}
+              onClick={pullFromSilpo} disabled={pulling}>
+        {pulling ? 'Переношу…' : 'Забрати до себе, щоб редагувати'}
+      </button>
+    </div>
+  )
+
+  const forgottenBlock = silpo?.available && silpo.forgotten?.length > 0 && (
+    <div className="card">
+      <div className="section-row">
+        <h3>Можливо, забули</h3>
+        <span className="muted">{silpo.forgotten_total} зі звичного</span>
+      </div>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        Це те, що ви берете регулярно, але зараз його в кошику Сільпо немає.
+      </p>
+      {silpo.forgotten.map((f) => (
+        <div className="offer" key={f.slug}>
+          <span className="offer-body">
+            <span className="offer-name">
+              {f.on_promotion && <span className="tag money" style={{ marginRight: 6 }}>акція</span>}
+              {f.name}
+            </span>
+            <span className="plan-meta"><span>{Math.round(f.price)} ₴</span><span>· {f.why}</span></span>
+          </span>
+          <AddToCartButton item={f} source="plan" />
+        </div>
+      ))}
+    </div>
+  )
+
+  const betterBlock = silpo?.better?.length > 0 && (
+    <div className="card">
+      <div className="section-row"><h3>Є вигідніше за те, що в кошику</h3></div>
+      {silpo.better.map((b) => (
+        <div className="offer" key={b.slug}>
+          <span className="offer-body">
+            <span className="offer-name">{b.name}</span>
+            <span className="plan-meta">
+              <span>замість «{b.in_cart}»</span>
+              <span className="delta down">−{Math.round(b.saved)} ₴</span>
+            </span>
+          </span>
+          <AddToCartButton item={b} source="promo" />
+        </div>
+      ))}
+    </div>
+  )
+
   if (!cart.items.length) {
     return (
       <Screen title="Кошик" tabs>
-        <div className="center">
-          <div style={{ fontSize: 34, marginBottom: 10 }}>🧺</div>
-          Кошик порожній
-          <p className="muted" style={{ marginTop: 8 }}>
-            Додавайте товари кнопкою «+» з будь-якого екрана — вони збиратимуться тут.
-          </p>
-        </div>
+        {silpoBlock}
+        {forgottenBlock}
+        {betterBlock}
+        {!silpo?.count && (
+          <div className="center">
+            <div style={{ fontSize: 34, marginBottom: 10 }}>🧺</div>
+            Кошик порожній
+            <p className="muted" style={{ marginTop: 8 }}>
+              Додавайте товари кнопкою «+» з будь-якого екрана.
+            </p>
+          </div>
+        )}
       </Screen>
     )
   }
@@ -100,6 +181,10 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
           <span className="v">{Math.round(cart.total)} ₴</span>
         </div>
       </div>
+
+      {silpoBlock}
+      {forgottenBlock}
+      {betterBlock}
     </Screen>
   )
 }

@@ -19,6 +19,7 @@ from app.db import repo
 from app.mcp import tools as T
 from app.mcp.gateway import silpo
 from app.security.session import current_user_id
+from app.services import pipeline, silpo_cart
 from app.services.cart_analysis import fetch_cart
 
 router = APIRouter(tags=["basket"])
@@ -90,6 +91,40 @@ async def set_quantity(
 async def remove_item(item_id: str, user_id: str = Depends(current_user_id)) -> dict[str, Any]:
     await repo.cart_remove(user_id, item_id)
     return _view(await repo.cart_items(user_id))
+
+
+@router.get("/cart/silpo")
+async def silpo_cart_view(user_id: str = Depends(current_user_id)) -> dict[str, Any]:
+    """Що гість уже зібрав у Сільпо — і чого там бракує проти його звичок.
+
+    Читаємо наживо: кошик змінюється щохвилини, тож класти це в кешований
+    план було б несумісно з реальністю.
+    """
+    async with silpo(user_id) as api:
+        ctx, products, meta = await fetch_cart(api)
+    if ctx is None:
+        return {"available": False, "reason": meta.get("reason", "Кошик Сільпо недоступний")}
+
+    plan = await pipeline.cached_plan_async(user_id)
+    return {"available": True, **silpo_cart.compare(products, plan)}
+
+
+@router.post("/cart/silpo/import")
+async def import_silpo_cart(user_id: str = Depends(current_user_id)) -> dict[str, Any]:
+    """Переносить позиції з кошика Сільпо в кошик застосунку, щоб їх можна
+    було редагувати разом із рештою. Нічого не видаляє на боці Сільпо."""
+    async with silpo(user_id) as api:
+        ctx, products, _meta = await fetch_cart(api)
+    if ctx is None:
+        raise HTTPException(status.HTTP_409_CONFLICT, "Кошик Сільпо недоступний")
+
+    added = 0
+    for line in silpo_cart.compare(products, None)["items"]:
+        if not line.get("product_id"):
+            continue
+        await repo.cart_add(user_id, {**line, "source": "silpo"})
+        added += 1
+    return {"imported": added, **_view(await repo.cart_items(user_id))}
 
 
 @router.post("/cart/checkout")
