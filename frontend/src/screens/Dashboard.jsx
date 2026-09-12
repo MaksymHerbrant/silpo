@@ -47,8 +47,10 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
   const money = insights?.money
   const top = (insights?.top_by_spend || []).slice(0, 5)
   const maxItem = Math.max(...top.map((t) => t.spend), 1)
-  const weeks = insights?.weeks || []
+  const rhythm = insights?.rhythm
+  const weeks = rhythm?.weeks || []
   const maxWeek = Math.max(...weeks.map((w) => w.spend), 1)
+  const WEEKDAYS = ['понеділок', 'вівторок', 'середу', 'четвер', 'пʼятницю', 'суботу', 'неділю']
   const proposals = metrics?.proposals
 
   return (
@@ -137,19 +139,29 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
         </div>
       )}
 
-      {weeks.length > 1 && (
+      {rhythm && rhythm.active_weeks > 0 && (
         <div className="card">
-          <div className="section-row"><h3>Ритм покупок по тижнях</h3></div>
+          <div className="section-row"><h3>Ритм покупок</h3></div>
+          <p className="muted" style={{ marginBottom: 10 }}>
+            Ви заходите в Сільпо <b>{rhythm.visits_per_week}</b> рази на тиждень,
+            найчастіше у <b>{WEEKDAYS[rhythm.top_weekday]}</b> ({rhythm.top_weekday_share}% походів).
+            Звичайний тиждень — <b>{Math.round(rhythm.typical_spend)} ₴</b>.
+          </p>
           <div className="spark">
             {weeks.map((w) => (
-              <div key={w.week} title={`${w.week}: ${Math.round(w.spend)} ₴`}>
-                <i style={{ height: `${(w.spend / maxWeek) * 100}%` }} />
+              <div key={w.week} className={w.visits ? '' : 'empty'} title={`${w.week}: ${Math.round(w.spend)} ₴, ${w.visits} походів`}>
+                <i style={{ height: `${Math.max((w.spend / maxWeek) * 100, w.visits ? 4 : 0)}%` }} />
+                <span className="spark-val">{w.visits ? Math.round(w.spend) : '—'}</span>
               </div>
             ))}
           </div>
           <div className="spark-labels">
             {weeks.map((w) => <span key={w.week}>{w.week.slice(8)}.{w.week.slice(5, 7)}</span>)}
           </div>
+          <p className="over-note">
+            Останні 12 тижнів, ₴ за тиждень. Порожній стовпчик — тиждень без чека
+            {rhythm.active_weeks < 12 && ` (таких ${12 - rhythm.active_weeks})`}.
+          </p>
         </div>
       )}
 

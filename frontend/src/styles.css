@@ -250,6 +250,9 @@ h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .spark { display: flex; align-items: flex-end; gap: 5px; height: 84px; margin-top: 6px; }
 .spark div { flex: 1; background: var(--brand-soft); border-radius: 4px 4px 0 0; position: relative; }
 .spark div i { position: absolute; inset: auto 0 0 0; background: var(--brand); border-radius: 4px 4px 0 0; }
+.spark div.empty { background: transparent; border-bottom: 2px dashed var(--rule); border-radius: 0; }
+.spark-val { position: absolute; left: 0; right: 0; bottom: 100%; text-align: center; font-size: 9px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.spark { padding-top: 14px; }
 .spark-labels { display: flex; gap: 5px; margin-top: 6px; }
 .spark-labels span { flex: 1; text-align: center; font-size: 10px; color: var(--ink-3); }
 

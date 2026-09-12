@@ -44,7 +44,8 @@ async def overview(
         jobs.reset_failures("insights", user_id)
     else:
         row = await cache.load(user_id, "insights")
-        if row and row.get("payload"):
+        # Старий кеш без блоку «ритм» перебудовуємо, не чекаючи нового чека
+        if row and row.get("payload") and "rhythm" in row["payload"]:
             return {**row["payload"], "cached": True, "built_at": row.get("built_at")}
 
     async def builder(api, ctx, orders, goal_row):

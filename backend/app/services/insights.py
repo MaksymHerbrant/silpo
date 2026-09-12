@@ -74,6 +74,36 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         for week, values in sorted(by_week.items())
     ]
 
+    # --- ритм: як часто і в які дні ---
+    # Останні 12 тижнів БЕЗ пропусків: тиждень без походу — це теж факт про
+    # ритм, і його треба показати нулем, а не зникнути з осі.
+    last_week = _week_start(orders[0].created_at.date())
+    recent_weeks = []
+    for back in range(11, -1, -1):
+        week = last_week - timedelta(days=7 * back)
+        values = by_week.get(week) or {"spend": 0.0, "saved": 0.0, "visits": 0}
+        recent_weeks.append({
+            "week": week.isoformat(),
+            "spend": round(values["spend"], 2),
+            "saved": round(values["saved"], 2),
+            "visits": int(values["visits"]),
+        })
+    weekdays: dict[int, int] = defaultdict(int)
+    for order in orders:
+        weekdays[order.created_at.weekday()] += 1
+    top_weekday, top_weekday_visits = max(weekdays.items(), key=lambda x: x[1])
+    active_weeks = sum(1 for w in recent_weeks if w["visits"])
+    rhythm = {
+        "weeks": recent_weeks,
+        "active_weeks": active_weeks,
+        "visits_per_week": round(len(orders) / max(period_days / 7, 1), 1),
+        "top_weekday": top_weekday,
+        "top_weekday_share": round(top_weekday_visits / len(orders) * 100),
+        "typical_spend": round(
+            sorted(w["spend"] for w in recent_weeks if w["visits"])[active_weeks // 2], 2
+        ) if active_weeks else 0.0,
+    }
+
     # --- магазини ---
     branches: dict[str, float] = defaultdict(float)
     for order in orders:
@@ -102,6 +132,7 @@ async def build(api, ctx: T.CartContext, orders, goal: str | None = None) -> dic
         ],
         "categories": structure.as_dict(),
         "weeks": weeks,
+        "rhythm": rhythm,
         "favourite_branch": favourite,
         "distinct_products": len(products),
     }

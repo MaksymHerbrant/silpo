@@ -124,7 +124,17 @@ function Main({ user }) {
   useEffect(() => {
     if (!settings?.onboarded) return
     loadPlan()
-    api.insights().then(setInsights).catch(() => {})
+    // Інсайти будуються у фоні — опитуємо, поки не готові, інакше блок
+    // «ритм по тижнях» лишається порожнім до наступного відкриття
+    let tries = 0
+    const poll = async () => {
+      try {
+        const data = await api.insights()
+        setInsights(data)
+        if (data.building && tries++ < 40) setTimeout(poll, 3000)
+      } catch { /* покажемо без інсайтів */ }
+    }
+    poll()
   }, [settings?.onboarded, loadPlan])
 
   async function saveSettings(values) {
