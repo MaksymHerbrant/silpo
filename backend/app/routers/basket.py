@@ -106,7 +106,8 @@ async def silpo_cart_view(user_id: str = Depends(current_user_id)) -> dict[str, 
         return {"available": False, "reason": meta.get("reason", "Кошик Сільпо недоступний")}
 
     plan = await pipeline.cached_plan_async(user_id)
-    return {"available": True, **silpo_cart.compare(products, plan)}
+    own = await repo.cart_items(user_id)
+    return {"available": True, **silpo_cart.compare(products, plan, own)}
 
 
 @router.post("/cart/silpo/import")

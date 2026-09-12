@@ -32,10 +32,27 @@ def _line(product: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def compare(cart_products: list[dict[str, Any]], plan: dict[str, Any] | None) -> dict[str, Any]:
-    """Звіряє готовий кошик Сільпо зі звичним набором гостя."""
+def compare(
+    cart_products: list[dict[str, Any]], plan: dict[str, Any] | None,
+    app_cart: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Звіряє зібране гостем зі звичним набором.
+
+    «Зібране» — це і кошик Сільпо, і кошик застосунку: гість збирає в обох,
+    і рада «є вигідніше» має дивитись на все, що він збирається купити,
+    а не лише на те, що вже поїхало в Сільпо.
+    """
     items = [_line(p) for p in cart_products if p.get("name")]
-    in_cart_kinds = {kinds.kind_of(i["name"]) for i in items}
+    own = [
+        {"name": i.get("name"), "slug": i.get("slug"), "product_id": i.get("product_id"),
+         "quantity": int(i.get("quantity") or 1), "price": float(i.get("price") or 0),
+         "total": float(i.get("price") or 0) * int(i.get("quantity") or 1), "where": "app"}
+        for i in (app_cart or []) if i.get("name")
+    ]
+    for line in items:
+        line["where"] = "silpo"
+    everything = items + own
+    in_cart_kinds = {kinds.kind_of(i["name"]) for i in everything}
 
     basket = [
         i for i in ((plan or {}).get("items") or [])
@@ -68,7 +85,7 @@ def compare(cart_products: list[dict[str, Any]], plan: dict[str, Any] | None) ->
         (i.get("kind_key") or kinds.kind_of(i.get("name") or "")): i
         for i in basket if i.get("alternative")
     }
-    for line in items:
+    for line in everything:
         habit = by_kind.get(kinds.kind_of(line["name"]))
         if not habit:
             continue
@@ -77,6 +94,8 @@ def compare(cart_products: list[dict[str, Any]], plan: dict[str, Any] | None) ->
             continue
         better.append({
             "in_cart": line["name"],
+            "where": line.get("where", "silpo"),
+            "image": alt.get("image"),
             "slug": alt.get("slug"),
             "product_id": alt.get("product_id"),
             "name": alt.get("name"),

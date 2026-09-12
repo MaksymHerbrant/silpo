@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import AddToCartButton from '../components/AddToCartButton'
-import ReminderToggle from '../components/ReminderToggle'
 import Screen from '../components/Screen'
+import Thumb from '../components/Thumb'
 import { api } from '../lib/api'
 
 /**
@@ -48,7 +48,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
 
   if (!plan?.has_data) {
     return (
-      <Screen title="Акції" tabs>
+      <Screen title="Вигода" tabs>
         <div className="center">
           {plan?.building
             ? <><div className="spinner" />Читаю ваші чеки й акції…</>
@@ -67,41 +67,13 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
   const priceDrops = drops?.drops || []
 
   return (
-    <Screen title="Акції" tabs>
+    <Screen title="Вигода" tabs>
       <div>
         <h1>Вигода на звичному</h1>
         <p className="lede">
           З ваших {summary.receipts} чеків. Заміни підбирались із порогом «{summary.price_tolerance_label}».
         </p>
       </div>
-
-      {due.length > 0 && (
-        <div className="card">
-          <div className="section-row">
-            <h3>Час поповнити</h3>
-            <span className="muted">{Math.round(reminders.summary.due_total)} ₴</span>
-          </div>
-          {due.map((r) => (
-            <div className="due-row" key={r.slug}>
-              <button className="due-body" onClick={() => onOpenItem(r.slug)}>
-                <div className="due-name">{r.name}</div>
-                <div className={`due-when${r.overdue ? ' overdue' : ''}`}>
-                  {whenLabel(r)} · раз на {r.cycle_days} дн. ({r.cycle_source_label})
-                </div>
-              </button>
-              <ReminderToggle
-                on={r.reminder_on}
-                busy={Boolean(pending[r.slug])}
-                onToggle={(v) => toggle(r.slug, v)}
-              />
-              <AddToCartButton item={r} source="promo" />
-            </div>
-          ))}
-          <p className="over-note">
-            Перемикач вмикає нагадування в боті. Без нього ми нічого не надсилаємо.
-          </p>
-        </div>
-      )}
 
       {priceDrops.length > 0 && (
         <div className="card">
@@ -111,6 +83,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
           </div>
           {priceDrops.map((d) => (
             <div className="offer" key={d.slug}>
+              <Thumb src={d.image} />
               <button className="offer-body" onClick={() => onOpenItem(d.slug)}>
                 <span className="offer-name">{d.name}</span>
                 <span className="plan-meta">
@@ -166,6 +139,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
           </div>
           {promos.map((i) => (
             <div className="offer" key={i.slug}>
+              <Thumb src={i.image} />
               <button className="offer-body" onClick={() => onOpenItem(i.slug)}>
                 <span className="offer-name">{i.name}</span>
                 <span className="plan-meta">
@@ -185,6 +159,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
           <div className="section-row"><h3>Вигідніші аналоги</h3></div>
           {swaps.map((i) => (
             <div className="offer" key={i.slug}>
+              <Thumb src={i.alternative.image || i.image} />
               <button className="offer-body" onClick={() => onOpenItem(i.slug)}>
                 <span className="offer-name">{i.alternative.name}</span>
                 <span className="plan-meta"><span>замість «{i.name}»</span></span>
@@ -205,6 +180,37 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
         </div>
       )}
 
+      {due.length > 0 && (
+        <div className="card">
+          <div className="section-row">
+            <h3>Час поповнити</h3>
+            <span className="muted">{Math.round(reminders.summary.due_total)} ₴</span>
+          </div>
+          {due.map((r) => (
+            <div className="due-row" key={r.slug}>
+              <Thumb src={r.image} />
+              <button className="due-body" onClick={() => onOpenItem(r.slug)}>
+                <div className="due-name">{r.name}</div>
+                <div className={`due-when${r.overdue ? ' overdue' : ''}`}>
+                  {whenLabel(r)} · раз на {r.cycle_days} дн.
+                </div>
+                <button
+                  className={`bell${r.reminder_on ? ' on' : ''}`}
+                  disabled={Boolean(pending[r.slug])}
+                  onClick={(e) => { e.stopPropagation(); toggle(r.slug, !r.reminder_on) }}
+                >
+                  {r.reminder_on ? '🔔 нагадаю в боті' : '🔕 нагадати, коли закінчиться'}
+                </button>
+              </button>
+              <AddToCartButton item={r} source="promo" />
+            </div>
+          ))}
+          <p className="over-note">
+            Ритм порахований із ваших чеків. «+» кладе в кошик, дзвіночок — нагадування в боті.
+          </p>
+        </div>
+      )}
+
       {upcoming.length > 0 && (
         <div className="card plain">
           <div className="section-row"><h3>Найближчим часом</h3></div>
@@ -214,11 +220,13 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                 <div className="due-name">{r.name}</div>
                 <div className="due-when">{whenLabel(r)} · раз на {r.cycle_days} дн.</div>
               </button>
-              <ReminderToggle
-                on={r.reminder_on}
-                busy={Boolean(pending[r.slug])}
-                onToggle={(v) => toggle(r.slug, v)}
-              />
+              <button
+                className={`bell${r.reminder_on ? ' on' : ''}`}
+                disabled={Boolean(pending[r.slug])}
+                onClick={() => toggle(r.slug, !r.reminder_on)}
+              >
+                {r.reminder_on ? '🔔' : '🔕'}
+              </button>
             </div>
           ))}
         </div>

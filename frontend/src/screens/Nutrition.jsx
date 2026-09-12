@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import AddToCartButton from '../components/AddToCartButton'
 import Screen from '../components/Screen'
+import Thumb from '../components/Thumb'
 import { api } from '../lib/api'
 
 /**
@@ -138,6 +139,7 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
               {r.note && <p className="over-note">{r.note}</p>}
               {(r.products || []).map((prod) => (
                 <div className="offer" key={prod.slug}>
+                  <Thumb src={prod.image} />
                   <span className="offer-body">
                     <span className="offer-name">{prod.name}</span>
                     <span className="plan-meta">

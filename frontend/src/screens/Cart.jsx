@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import AddToCartButton from '../components/AddToCartButton'
 import Screen from '../components/Screen'
+import Thumb from '../components/Thumb'
 import { api } from '../lib/api'
 import { useCart } from '../lib/cart'
 
@@ -73,6 +74,7 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
       </p>
       {silpo.forgotten.map((f) => (
         <div className="offer" key={f.slug}>
+          <Thumb src={f.image} />
           <span className="offer-body">
             <span className="offer-name">
               {f.on_promotion && <span className="tag money" style={{ marginRight: 6 }}>акція</span>}
@@ -88,9 +90,13 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
 
   const betterBlock = silpo?.better?.length > 0 && (
     <div className="card">
-      <div className="section-row"><h3>Є вигідніше за те, що в кошику</h3></div>
+      <div className="section-row"><h3>Є вигідніше за те, що вже в кошику</h3></div>
+      <p className="muted" style={{ marginBottom: 10 }}>
+        Звіряю і ваш кошик тут, і той, що вже зібраний у Сільпо.
+      </p>
       {silpo.better.map((b) => (
         <div className="offer" key={b.slug}>
+          <Thumb src={b.image} />
           <span className="offer-body">
             <span className="offer-name">{b.name}</span>
             <span className="plan-meta">

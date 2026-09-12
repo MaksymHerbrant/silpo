@@ -1,4 +1,5 @@
 import Screen from '../components/Screen'
+import Thumb from '../components/Thumb'
 
 /**
  * План покупки: кожен рядок — рішення, яке приймає гість.
@@ -70,6 +71,7 @@ export default function ShoppingPlan({
                 {state.selected ? '✓' : ''}
               </button>
 
+              <Thumb src={useAlt ? (alt.image || i.image) : i.image} size={40} />
               <div className="plan-body">
                 <div className="plan-top">
                   <button className="plan-name link" onClick={() => onOpenItem(i.slug)}>
@@ -118,24 +120,43 @@ export default function ShoppingPlan({
                 )}
 
                 {alt && (
-                  <button
-                    className={`alt-row${useAlt ? ' active' : ''}`}
-                    onClick={() => onSwitch(i.slug)}
-                  >
-                    <span className="alt-text">
-                      {useAlt ? (
-                        <>Повернути «{i.name}» за {Math.round(i.price)} ₴</>
-                      ) : (
-                        <>
-                          {alt.composition_known === false && '⚠️ '}
-                          {alt.name} — {alt.why}
-                          {alt.saved > 0 && <b className="delta down"> −{Math.round(alt.saved)} ₴</b>}
-                          {alt.saved < 0 && <b className="delta up"> +{Math.round(-alt.saved)} ₴</b>}
-                        </>
+                  <div className="choice-box">
+                    <div className="choice-alt">
+                      <div className="choice-alt-top">
+                        <span className="choice-alt-name">
+                          <Thumb src={alt.image} size={32} />
+                          {alt.name}
+                        </span>
+                        <span className="choice-alt-price">{Math.round(alt.price)} ₴</span>
+                      </div>
+                      <div className="choice-alt-why">
+                        {alt.why}
+                        {alt.saved > 0 && <b className="delta down"> · −{Math.round(alt.saved)} ₴</b>}
+                        {alt.saved < 0 && <b className="delta up"> · +{Math.round(-alt.saved)} ₴</b>}
+                      </div>
+                      {alt.composition_known === false && (
+                        <div className="over-note" style={{ color: 'var(--money-text)', fontWeight: 600 }}>
+                          ⚠️ Склад не вказано в каталозі — перевірте на упаковці
+                        </div>
                       )}
-                    </span>
-                    <span className="alt-action">{useAlt ? 'Лишити своє' : 'Взяти це'}</span>
-                  </button>
+                    </div>
+                    <div className="choice-actions">
+                      <button
+                        className={`pick${useAlt ? '' : ' on'}`}
+                        aria-pressed={!useAlt}
+                        onClick={() => { if (useAlt) onSwitch(i.slug) }}
+                      >
+                        Лишити своє · {Math.round(i.price)} ₴
+                      </button>
+                      <button
+                        className={`pick${useAlt ? ' on' : ''}`}
+                        aria-pressed={Boolean(useAlt)}
+                        onClick={() => { if (!useAlt) onSwitch(i.slug) }}
+                      >
+                        Взяти заміну · {Math.round(alt.price)} ₴
+                      </button>
+                    </div>
+                  </div>
                 )}
               </div>
                   </div>

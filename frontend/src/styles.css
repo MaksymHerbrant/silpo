@@ -806,3 +806,20 @@ h3 { font-size: 15px; font-weight: 700; }
   color: var(--brand-text);
 }
 .tag.good, .health-chip.good, .hab-strong, .hab-verdict.strong { color: var(--ok); }
+
+/* --- Мініатюри товарів: у списках товар без фото виглядає безликим --- */
+.thumb {
+  flex: none; border-radius: 10px; object-fit: contain; background: #fff;
+  border: 1px solid var(--rule);
+}
+.thumb.ph { display: grid; place-items: center; font-size: 18px; background: var(--surface-2); }
+
+/* --- Нагадування: підписана кнопка замість голого перемикача --- */
+.bell {
+  display: inline-block; margin-top: 6px; padding: 5px 10px; border-radius: 999px;
+  border: 1px solid var(--rule); background: var(--surface); color: var(--ink-2);
+  font-family: inherit; font-size: 12px; font-weight: 600;
+}
+.bell.on { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.bell:disabled { opacity: .5; }
+.choice-alt-name { display: flex; align-items: center; gap: 8px; }
