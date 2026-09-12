@@ -140,14 +140,32 @@ function Main({ user }) {
     }
   }
 
-  /** Обране в списку плану переїздить у спільний кошик — і гість бачить його в табі. */
+  /**
+   * Обране в списку плану переїздить у спільний кошик — і гість бачить його в табі.
+   *
+   * Тут же фіксуються рішення щодо пропозицій: узяв заміну чи акцію —
+   * прийнято; лишив своє при наявній заміні або зняв галочку з акції —
+   * відхилено. Раніше записувалось лише «+» на картці, і метрика бачила
+   * одне рішення на десяток показаних.
+   */
   async function planToCart() {
-    const picked = (plan?.items || []).filter((i) => chosen[i.slug]?.selected)
+    const items = plan?.items || []
+    const picked = items.filter((i) => chosen[i.slug]?.selected)
     if (!picked.length) return
     setBusy(true)
     try {
+      const rejected = []
+      for (const i of items) {
+        if (!i.decision_id) continue
+        const state = chosen[i.slug] || {}
+        const accepted = i.alternative
+          ? Boolean(state.selected && state.useAlternative)
+          : Boolean(state.selected)
+        if (!accepted) rejected.push(i.decision_id)
+      }
       for (const i of picked) {
         const alt = chosen[i.slug]?.useAlternative ? i.alternative : null
+        const accepted = i.decision_id && (alt || !i.alternative)
         await add({
           product_id: alt ? alt.product_id : i.product_id,
           slug: alt ? alt.slug : i.slug,
@@ -156,8 +174,10 @@ function Main({ user }) {
           price: alt ? alt.price : i.price,
           quantity: i.quantity,
           source: 'plan',
+          ...(accepted ? { decision_id: i.decision_id } : {}),
         })
       }
+      await Promise.allSettled(rejected.map((id) => api.decide(id, false)))
       notify('success')
       setOver(null)
       setTab('cart')

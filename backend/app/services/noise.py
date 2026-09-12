@@ -109,6 +109,17 @@ def classify(row: dict[str, Any], receipts: int, period_days: int) -> Classified
     quantity = float(row.get("total_qty") or 0)
     habit = habit_model.analyse(row.get("days") or [], period_days, cycle)
 
+    # Вид, у якому жодна марка не повторилась, — не звичка, а перебирання.
+    # Тестувальник узяв вісім різних напоїв по разу; за днями це «стабільно»,
+    # за суттю — вісім разових покупок з обличчям у вигляді комбучі.
+    brands = int(row.get("kind_brands") or 1)
+    if brands >= 2 and int(row.get("repeat_brands") or 0) == 0 and habit.kind == habit_model.STABLE:
+        habit = habit_model.Habit(
+            habit_model.OCCASIONAL,
+            f"{brands} різних товарів по одному разу — жоден не повторився",
+            habit.days, habit.weeks, habit.span_days, habit.coverage, habit.since_last_days,
+        )
+
     # Закупівля про запас: десять пляшок води за один похід — це запас на
     # тижні вперед, навіть якщо походів було мало.
     bulk = quantity >= max(threshold * 2, BULK_MIN_UNITS)

@@ -127,6 +127,11 @@ def group(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         top = members[0]
         top_days = len(top.get("days") or [])
         loyalty = top_days / len(days) if days else 1.0
+        # Скільки марок гість узяв ПОВТОРНО. Вісім різних напоїв по одному
+        # разу дають вісім днів — але жоден із них не повторився, і це не
+        # звичка «беру напій», а вісім разових спроб. noise.classify
+        # дивиться на це число перед тим, як вірити кількості днів.
+        repeat_brands = sum(1 for m in members if len(m.get("days") or []) >= 2)
         indifferent = (
             len(members) >= MIN_BRANDS_FOR_INDIFFERENT and loyalty < LOYALTY_THRESHOLD
         )
@@ -140,6 +145,7 @@ def group(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "history": sorted(history, key=lambda h: h.get("date") or ""),
             "kind_key": kind,
             "kind_brands": len(members),
+            "repeat_brands": repeat_brands,
             "loyalty": round(loyalty, 2),
             "brand_indifferent": indifferent,
             "members": [
