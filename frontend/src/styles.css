@@ -664,3 +664,145 @@ h3 { margin: 0; font-size: 15px; font-weight: 700; }
 .pick.on { background: var(--brand); color: #fff; }
 
 .tag.money { background: var(--money-soft); color: var(--money); }
+
+/* --- Візуальний шар команди (Стас, репозиторій StasYakCode/frontend) ---
+   Перевизначає токени й компоненти поверх усього вище. Тримати ОСТАННІМ:
+   правила екранів не мають перекривати спільну мобільну систему. */
+:root {
+  --bg: #faf6f0;
+  --surface: #ffffff;
+  --surface-2: #fbf1eb;
+  --ink: #1a1a1a;
+  --ink-2: #666666;
+  --ink-3: #8a8179;
+  --rule: #e0dcd3;
+  --brand: #ff6b00;
+  --brand-ink: #ffffff;
+  --brand-soft: #fff0e5;
+  --money: #ffb800;
+  --money-soft: #fff4d6;
+  --ok: #2e7d32;
+  --ok-soft: #e8f5e9;
+  --danger: #c0392b;
+  --r-pill: 16px;
+  --r-card: 16px;
+  --r-btn: 26px;
+  --pad: 20px;
+  --shadow: none;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+#root { width: 100%; min-height: 100vh; max-width: 402px; margin: 0 auto; background: var(--bg); }
+
+.screen { min-height: 100vh; background: var(--bg); }
+.top {
+  grid-template-columns: 32px 1fr 32px;
+  padding: 12px 20px 8px;
+  background: var(--bg);
+  border: 0;
+  position: static;
+}
+.top h2 { font-size: 22px; font-weight: 700; text-align: left; letter-spacing: 0; }
+.top button { color: var(--ink); }
+.top .dot { width: 9px; height: 9px; background: var(--brand); }
+.body { gap: 20px; padding: 0 20px 24px; }
+.bottom { padding: 16px 20px 24px; background: var(--bg); border: 0; }
+
+h1 { font-size: 24px; line-height: 1.2; font-weight: 900; letter-spacing: 0; }
+h3 { font-size: 15px; font-weight: 700; }
+.lede { color: var(--ink-2); }
+.muted, .label { color: var(--ink-2); }
+
+.card, .stat-tile, .agent-report, .agent-card, .score-card {
+  border: 1px solid var(--rule);
+  border-radius: var(--r-card);
+  box-shadow: none;
+}
+.card { padding: 16px; }
+.btn {
+  min-height: 52px;
+  padding: 14px 24px;
+  border-radius: var(--r-btn);
+  background: var(--brand);
+  color: #fff;
+  font-weight: 700;
+}
+.btn.ghost { background: #fff; color: var(--ink); border: 1px solid var(--rule); }
+.pills { gap: 8px; }
+.pill { padding: 8px 16px; border-radius: 16px; border-color: var(--rule); font-size: 13px; }
+.pill[aria-pressed='true'] { background: var(--brand); border-color: var(--brand); }
+
+.choice, .finding, .status-bar, .opt, .opp {
+  border-color: var(--rule);
+  border-radius: 16px;
+  box-shadow: none;
+}
+.choice[aria-pressed='true'], .opt[aria-pressed='true'] {
+  border-color: var(--brand);
+  background: var(--brand-soft);
+  box-shadow: none;
+}
+.choice .ico, .finding-ico, .opp-ico { background: var(--brand-soft); }
+.hero-money, .save-hero { border-radius: 24px; background: var(--brand); }
+.summary, .effect { background: var(--brand-soft); border-radius: 12px; }
+.status-bar.on, .score-card.good { background: var(--ok-soft); border-color: var(--ok); }
+.score-card.watch { background: var(--money-soft); border-color: var(--money); }
+
+.tabbar {
+  left: 50%;
+  right: auto;
+  width: min(100%, 402px);
+  transform: translateX(-50%);
+  background: #fff;
+  border-top-color: var(--rule);
+}
+.tab { color: var(--ink-3); }
+.tab.on, .group-title, .alt-action, .inline-link { color: var(--brand); }
+.tab-badge { background: var(--brand); }
+
+.cart-row, .line, .plan-row, .trace-item, .offer, .due-row, .live-row {
+  border-color: var(--rule);
+}
+.cart-img, .strip-item, .tag, .qty, .basket-card, .hab-weak, .obs-alt { background: var(--surface-2); }
+.progress, .bar-track { background: var(--surface-2); }
+.progress i, .bar-track i, .tick.on, .check { background: var(--brand); border-color: var(--brand); }
+.tag.money, .badge-money, .tag.warn { background: var(--brand-soft); color: var(--brand); }
+.tag.good, .health-chip.good, .hab-strong { background: var(--ok-soft); color: var(--ok); }
+.switch.on, .add-btn.in { background: var(--brand); border-color: var(--brand); }
+
+.sheet-backdrop { background: rgba(26, 26, 26, .42); }
+.sheet { background: var(--bg); }
+.sheet-head { border-color: var(--rule); }
+.sheet-grip { background: var(--rule); }
+
+@media (max-width: 402px) {
+  #root { max-width: none; }
+  .top, .body, .bottom { padding-left: 20px; padding-right: 20px; }
+}
+
+/* --- Читабельність поверх шару команди ---
+   Заливки й кнопки лишаються помаранчевими та жовтими, як задумано. Але
+   як ТЕКСТ на білому ці кольори не читаються: #ffb800 дає контраст 1.7:1,
+   #ff6b00 — 2.9:1 (норма 4.5). Суми економії — найважливіші цифри в
+   застосунку, їх не можна робити ледь помітними. Тому лише текстові
+   випадки отримують темніші відтінки тих самих кольорів. */
+:root {
+  --money-text: #a86400;   /* 4.7:1 на білому */
+  --brand-text: #c24f00;   /* 4.8:1 на білому */
+}
+.opp-money, .v.money, .stat-tile .n.money, .ar-value.money, .delta.down,
+.alt-text .money, .finding-value.money, .strip-price .money, .over-item .op,
+.tag.money, .badge-money, .tag.warn, .plan-note.warn {
+  color: var(--money-text);
+}
+.inline-link, .why, .tab.on, .group-title, .alt-action, .agent-badge,
+.eyebrow, .hab-verdict.strong, .score-title {
+  color: var(--brand-text);
+}
+.tag.good, .health-chip.good, .hab-strong, .hab-verdict.strong { color: var(--ok); }
