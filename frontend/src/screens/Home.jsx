@@ -1,4 +1,5 @@
 import Screen from '../components/Screen'
+import Icon from '../components/Icon'
 
 /**
  * Головний екран. Відповідає на одне питання за десять секунд:
@@ -9,7 +10,7 @@ import Screen from '../components/Screen'
  */
 function Money({ value }) {
   if (!value) return null
-  return <span className="opp-money">−{Math.round(value)} ₴</span>
+  return <span className="opp-money">{Math.round(value)} ₴</span>
 }
 
 export default function Home({ plan, onOpenPlan, onOpenOpportunity, onOpenInsights, onRefresh }) {
@@ -71,7 +72,7 @@ export default function Home({ plan, onOpenPlan, onOpenOpportunity, onOpenInsigh
 
       {saving > 0 && (
         <div className="save-hero">
-          <div className="save-value">−{Math.round(saving)} ₴</div>
+          <div className="save-value">{Math.round(saving)} ₴</div>
           <div className="save-label">можна зекономити на наступній покупці</div>
         </div>
       )}
@@ -94,7 +95,7 @@ export default function Home({ plan, onOpenPlan, onOpenOpportunity, onOpenInsigh
 
       <button className="basket-card" onClick={onOpenPlan}>
         <span className="bc-top">
-          <span className="bc-title">🛒 Ваш звичний набір готовий</span>
+          <span className="bc-title"><Icon name="basket" size={18} /> Ваш звичний набір готовий</span>
           <span className="bc-total">{Math.round(basket.total || 0)} ₴</span>
         </span>
         <span className="bc-sub">
@@ -104,7 +105,7 @@ export default function Home({ plan, onOpenPlan, onOpenOpportunity, onOpenInsigh
       </button>
 
       <button className="link-row" onClick={onOpenInsights}>
-        <span>Як я це порахував — цифри й докази</span>
+        <span>Звідки ці цифри</span>
         <span className="chev">›</span>
       </button>
     </Screen>

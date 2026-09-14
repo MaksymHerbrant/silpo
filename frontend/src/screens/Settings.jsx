@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Icon from '../components/Icon'
 import Screen from '../components/Screen'
 
 /**
@@ -67,9 +68,9 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
 
         <div className="effect">
           {example
-            ? <>Для товару за <b>100 ₴</b> покажемо заміни до <b>{example} ₴</b>. Дорожчі
-                сховаємо під «показати ще варіанти» — самі їх не підставимо.</>
-            : <>Ціна не фільтрує пропозиції. Ми все одно ставимо дешевші варіанти першими.</>}
+            ? <>Для товару за <b>100 ₴</b> заміни будуть до <b>{example} ₴</b>. Дорожчі —
+                під «показати ще варіанти», у план вони не потрапляють.</>
+            : <>Ціна не обмежує пропозиції; дешевші варіанти все одно йдуть першими.</>}
         </div>
       </section>
 
@@ -105,7 +106,7 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
         <div>
           <h3>Обмеження</h3>
           <p className="muted" style={{ marginTop: 4 }}>
-            Беруться з анкети в застосунку Сільпо. Ми їх не вигадуємо.
+            З анкети в застосунку Сільпо.
           </p>
         </div>
 
@@ -113,7 +114,7 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
           <div className="card plain">
             <p className="muted">
               У профілі Сільпо обмежень не вказано. Заповніть анкету в застосунку —
-              і ми перевірятимемо склад кожного товару.
+              і склад кожного товару перевірятиметься автоматично.
             </p>
           </div>
         ) : (
@@ -123,7 +124,7 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
                 <span className="k">{r.label}</span>
                 <span className="v">
                   {r.kind === 'allergen'
-                    ? <span className="tag warn">🔒 жорсткий блок</span>
+                    ? <span className="tag warn"><Icon name="lock" size={12} /> блокує завжди</span>
                     : <span className="tag good">м'яка заміна</span>}
                 </span>
               </div>
@@ -137,11 +138,11 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
 
       <section className="section">
         <button className="link-row" onClick={onOpenNutrition}>
-          <span>🥗 Харчування — що варто додати</span>
+          <span><Icon name="leaf" size={18} /> Харчування — що варто додати</span>
           <span className="chev">›</span>
         </button>
         <button className="link-row" onClick={onOpenLive}>
-          <span>🔌 Живі дані — доказ роботи через MCP</span>
+          <span><Icon name="plug" size={18} /> Живі дані — виклики MCP наживо</span>
           <span className="chev">›</span>
         </button>
       </section>

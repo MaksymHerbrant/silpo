@@ -11,8 +11,8 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSett
     return (
       <Sheet title="Приховано ціновим порогом" onClose={onClose}>
         <p className="muted">
-          Ви поставили межу «{summary.price_tolerance_label}». Ці варіанти її
-          перевищують, тому ми їх не підставляємо — але й не ховаємо від вас.
+          Ваша межа — «{summary.price_tolerance_label}». Ці варіанти її перевищують,
+          тому в план не потрапили, але подивитись їх можна.
         </p>
         {related.map((i) => (
           <div className="card plain" key={i.slug}>
@@ -54,8 +54,7 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSett
               </div>
             ))}
             <p className="muted" style={{ marginTop: 10 }}>
-              Дані беруться з анкети, яку ви заповнювали в застосунку Сільпо.
-              Ми їх не вигадуємо і не змінюємо.
+              Дані — з анкети, яку ви заповнювали в застосунку Сільпо.
             </p>
           </div>
         )}
@@ -100,8 +99,8 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSett
       <Sheet title={kind === 'emerging' ? 'Нове у вашому кошику' : 'Випало зі звички'} onClose={onClose}>
         <p className="muted">
           {kind === 'emerging'
-            ? 'Ви взяли ці товари кілька разів поспіль за короткий час. Це ще не ритм — ми не кладемо їх у звичний набір, поки покупки не повторяться в різні тижні.'
-            : 'Раніше ви брали це регулярно, а останнім часом ні. Ми не наполягаємо — просто помітили.'}
+            ? 'Ви взяли ці товари кілька разів нещодавно. Якщо покупки повторяться в різні тижні — вони стануть частиною звичного набору.'
+            : 'Раніше ви брали це регулярно, а останнім часом ні. Якщо потрібно — поверніть у набір.'}
         </p>
         {rows.map((r) => (
           <div className="card plain" key={r.slug}>
@@ -138,7 +137,7 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSett
                 </div>
                 {i.alternative.composition_known === false && (
                   <p className="over-note" style={{ color: 'var(--money)', fontWeight: 600 }}>
-                    ⚠️ Каталог не публікує склад цієї заміни — прочитайте його на упаковці.
+                    Каталог не публікує склад цієї заміни — прочитайте його на упаковці.
                   </p>
                 )}
                 <button
@@ -151,7 +150,7 @@ export default function CardDetail({ kind, plan, onClose, onOpenItem, onOpenSett
               </>
             ) : (
               <p className="over-note">
-                Безпечної заміни в каталозі не знайшли. Ми не пропонуємо навмання.
+                Заміни без вашого алергену в каталозі не знайшлось.
               </p>
             )}
           </div>

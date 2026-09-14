@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import AddToCartButton from '../components/AddToCartButton'
 import Screen from '../components/Screen'
 import Thumb from '../components/Thumb'
+import Icon from '../components/Icon'
 import { api } from '../lib/api'
 
 /**
@@ -79,7 +80,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
         <div className="card">
           <div className="section-row">
             <h3>Подешевшало</h3>
-            <span className="v money">−{Math.round(drops.total_saved)} ₴</span>
+            <span className="v money">{Math.round(drops.total_saved)} ₴</span>
           </div>
           {priceDrops.map((d) => (
             <div className="offer" key={d.slug}>
@@ -89,7 +90,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                 <span className="plan-meta">
                   <span>{Math.round(d.price)} ₴</span>
                   <s>{Math.round(d.was)} ₴</s>
-                  <span className="delta down">−{Math.round(d.saved)} ₴</span>
+                  <span className="delta down">{Math.round(d.saved)} ₴</span>
                   {d.lowest_seen && <span>· найнижча за час стеження</span>}
                 </span>
               </button>
@@ -134,7 +135,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
           <div className="section-row">
             <h3>Зараз в акції</h3>
             <span className="v money">
-              −{Math.round(promos.reduce((s, i) => s + i.saved * i.quantity, 0))} ₴
+              {Math.round(promos.reduce((s, i) => s + i.saved * i.quantity, 0))} ₴
             </span>
           </div>
           {promos.map((i) => (
@@ -145,7 +146,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                 <span className="plan-meta">
                   <span>{Math.round(i.price)} ₴</span>
                   {i.old_price && <s>{Math.round(i.old_price)} ₴</s>}
-                  <span className="delta down">−{Math.round(i.saved)} ₴</span>
+                  <span className="delta down">{Math.round(i.saved)} ₴</span>
                 </span>
               </button>
               <AddToCartButton item={i} source="promo" />
@@ -166,7 +167,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                 <span className="plan-meta">
                   <span>{Math.round(i.alternative.price)} ₴</span>
                   {i.alternative.saved > 0 && (
-                    <span className="delta down">−{Math.round(i.alternative.saved)} ₴</span>
+                    <span className="delta down">{Math.round(i.alternative.saved)} ₴</span>
                   )}
                   <span>· {i.alternative.why}</span>
                 </span>
@@ -199,7 +200,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                   disabled={Boolean(pending[r.slug])}
                   onClick={(e) => { e.stopPropagation(); toggle(r.slug, !r.reminder_on) }}
                 >
-                  {r.reminder_on ? '🔔 нагадаю в боті' : '🔕 нагадати, коли закінчиться'}
+                  <Icon name={r.reminder_on ? 'bell' : 'bellOff'} size={16} />{r.reminder_on ? 'нагадування увімкнено' : 'нагадати, коли закінчиться'}
                 </button>
               </button>
               <AddToCartButton item={r} source="promo" />
@@ -225,7 +226,7 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
                 disabled={Boolean(pending[r.slug])}
                 onClick={() => toggle(r.slug, !r.reminder_on)}
               >
-                {r.reminder_on ? '🔔' : '🔕'}
+                <Icon name={r.reminder_on ? 'bell' : 'bellOff'} size={18} />
               </button>
             </div>
           ))}
@@ -235,9 +236,8 @@ export default function Promotions({ plan, onOpenItem, onOpenSettings }) {
       {!promos.length && !swaps.length && !due.length && !priceDrops.length && (
         <div className="card plain">
           <p className="muted">
-            Ми перевірили всі {summary.items} товарів вашого набору — жоден
-            зараз не в акції, і персональних промо Сільпо теж не пропонує.
-            Це не помилка: акцій просто немає. Щойно щось подешевшає — побачите тут.{' '}
+            Жоден із {summary.items} товарів вашого набору зараз не в акції, і
+            персональних промо від Сільпо теж немає. Щойно щось подешевшає — зʼявиться тут.{' '}
             <button className="inline-link" onClick={onOpenSettings}>Змінити ціновий поріг</button>.
           </p>
         </div>

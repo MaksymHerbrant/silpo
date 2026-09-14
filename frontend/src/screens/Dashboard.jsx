@@ -59,7 +59,7 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
         <h1>Що видно з ваших чеків</h1>
         <p className="lede">
           {summary.receipts} чеків за {Math.round(summary.based_on_weeks)} тижнів.
-          Це підстави, на яких я будую рекомендації.
+          На цьому тримаються всі рекомендації.
         </p>
       </div>
 
@@ -75,7 +75,7 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
                 <span><b>{show.weak.lines}</b> рядків у чеках</span>
                 <span>але лише <b>{show.weak.days}</b> {show.weak.days === 1 ? 'день' : 'дні'} покупки</span>
               </div>
-              <div className="hab-verdict weak">слабкий сигнал — це один похід, а не ритм</div>
+              <div className="hab-verdict weak">один похід — ще не звичка</div>
             </div>
           )}
 
@@ -167,11 +167,11 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
 
       {proposals?.shown > 0 && (
         <div className="card plain">
-          <div className="section-row"><h3>Що з моїх порад ви взяли</h3></div>
+          <div className="section-row"><h3>Прийняті пропозиції</h3></div>
           {proposals.decided === 0 ? (
             <p className="muted">
-              Показав {proposals.shown} пропозицій. Щойно щось візьмете — тут
-              з'явиться відсоток і сума.
+              {proposals.shown} пропозицій показано. Після першого прийнятого
+              рішення тут зʼявиться відсоток і сума.
             </p>
           ) : (
             <>
@@ -185,7 +185,7 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
               {proposals.saved > 0 && (
                 <div className="kv">
                   <span className="k">Зекономлено на прийнятому</span>
-                  <span className="v money">−{Math.round(proposals.saved)} ₴</span>
+                  <span className="v money">{Math.round(proposals.saved)} ₴</span>
                 </div>
               )}
               {!proposals.reliable && (
@@ -198,7 +198,7 @@ export default function Dashboard({ plan, insights, onOpenInsights, onRefresh })
 
       <div className="card plain">
         <button className="disclose" onClick={() => setHow((v) => !v)}>
-          <span>Як я це рахую</span>
+          <span>Як це рахується</span>
           <span className="chev">{how ? '−' : '+'}</span>
         </button>
         {how && (

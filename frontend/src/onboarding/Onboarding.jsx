@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Icon from '../components/Icon'
 
 /**
  * Онбординг у два тапи — і обидва можна пропустити.
@@ -32,7 +33,7 @@ export default function Onboarding({ settings, name, onDone }) {
     return (
       <div className="screen">
         <div className="body fade" style={{ justifyContent: 'center' }}>
-          <div style={{ fontSize: 44 }}>🧺</div>
+          <div style={{ color: 'var(--brand-text)' }}><Icon name="basket" size={48} /></div>
           <h1>
             {name ? `${name}, ваші чеки ` : 'Ваші чеки '}
             <span className="hl">уже все знають</span>

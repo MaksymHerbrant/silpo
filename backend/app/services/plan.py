@@ -722,11 +722,11 @@ async def build(
             1 for b in blocked
             if b.alternative and not b.alternative.get("composition_known")
         )
-        detail = "У складі знайдено те, що ви вказали в профілі Сільпо як алерген"
+        detail = "У складі є те, що ви вказали в профілі Сільпо як алерген"
         if unverified:
             detail += (
-                f". Для {unverified} заміни каталог не дає складу — "
-                "ми це прямо позначили, а не видали за перевірку"
+                f". Для {unverified} заміни каталог не вказує складу — "
+                "перевірте його на упаковці"
             )
         findings.append(Finding(
             kind="safety",
@@ -779,13 +779,13 @@ async def build(
     promos = [p for p in plan if p.on_promotion and p.saved > 0 and p.action == ACTION_KEEP]
     for row in promos:
         row.action = ACTION_ADD
-        row.note = f"зараз в акції, −{round(row.saved)} ₴"
+        row.note = f"зараз в акції, на {round(row.saved)} ₴ дешевше"
     if promos:
         total = sum(p.saved * p.quantity for p in promos)
         findings.append(Finding(
             kind="promo",
             title=f"{len(promos)} ваші звичні товари в акції",
-            value=f"−{round(total)} ₴",
+            value=f"{round(total)} ₴",
             detail="Те, що ви й так берете, зараз дешевше",
             slugs=[p.slug for p in promos],
         ))
@@ -830,10 +830,9 @@ async def build(
         findings.append(Finding(
             kind="brand",
             title=f"{len(brand_swaps)} види, де марка вам не принципова",
-            value=f"−{round(total)} ₴" if total > 0 else "є акційні",
+            value=f"{round(total)} ₴" if total > 0 else "є акційні",
             detail=(
-                "Ви берете ці товари різних марок — отже марка не є частиною "
-                "звички. Показуємо ту, що зараз вигідніша"
+                "Ви берете їх різних марок, тож можна взяти ту, що зараз зі знижкою"
             ),
             slugs=[r.slug for r in brand_swaps],
         ))
@@ -905,7 +904,7 @@ async def build(
         findings.append(Finding(
             kind="alternative",
             title=f"{len(cheaper)} вигідніші аналоги",
-            value=f"−{round(total)} ₴",
+            value=f"{round(total)} ₴",
             detail="Та сама роль у кошику, але дешевше",
             slugs=[r.slug for r in cheaper],
         ))
@@ -916,10 +915,10 @@ async def build(
         findings.append(Finding(
             kind="emerging",
             title=f"{len(emerging)} нових товари у вашому кошику",
-            value="стежимо",
+            value="нове",
             detail=(
-                "Ви взяли їх нещодавно кілька разів поспіль. Це ще не ритм — "
-                "подивимось, чи повторяться"
+                "Взяли кілька разів нещодавно. Повториться в різні тижні — "
+                "стане частиною звичного набору"
             ),
             slugs=[r["slug"] for r in emerging[:6]],
         ))
@@ -931,7 +930,7 @@ async def build(
             kind="fading",
             title=f"{len(fading)} позиції випали зі звички",
             value="давно не брали",
-            detail="Раніше купували регулярно, а останнім часом ні. Можливо, просто забулось",
+            detail="Раніше брали регулярно, останнім часом ні. Якщо потрібно — поверніть у набір",
             slugs=[r["slug"] for r in fading[:6]],
         ))
 
@@ -945,8 +944,8 @@ async def build(
             title=f"{hidden} варіанти приховано ціновим порогом",
             value=pricing.describe(tolerance),
             detail=(
-                "Вони дорожчі за вашу межу. Поріг змінюється в налаштуваннях, "
-                "а самі варіанти видно в картці товару"
+                "Дорожчі за вашу межу. Поріг можна змінити в налаштуваннях, "
+                "самі варіанти — у картці товару"
             ),
             slugs=[p.slug for p in plan if p.alternatives_over],
         ))

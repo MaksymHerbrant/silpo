@@ -826,3 +826,11 @@ h3 { font-size: 15px; font-weight: 700; }
 .bell.on { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
 .bell:disabled { opacity: .5; }
 .choice-alt-name { display: flex; align-items: center; gap: 8px; }
+
+/* Лінійні іконки: сидять на базовій лінії тексту, колір беруть від нього */
+.ico { display: inline-block; vertical-align: -0.2em; flex-shrink: 0; }
+.tab-ico .ico { vertical-align: middle; }
+.link-row .ico, .bc-title .ico { margin-right: 6px; vertical-align: -0.22em; }
+.tag .ico { vertical-align: -0.15em; margin-right: 2px; }
+.bell .ico { margin-right: 5px; }
+.tick .ico, .live-dot .ico { vertical-align: middle; }

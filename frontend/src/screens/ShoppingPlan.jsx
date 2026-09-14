@@ -1,5 +1,6 @@
 import Screen from '../components/Screen'
 import Thumb from '../components/Thumb'
+import Icon from '../components/Icon'
 
 /**
  * План покупки: кожен рядок — рішення, яке приймає гість.
@@ -68,7 +69,7 @@ export default function ShoppingPlan({
                 onClick={() => onToggle(i.slug)}
                 aria-label={state.selected ? 'Прибрати зі списку' : 'Додати до списку'}
               >
-                {state.selected ? '✓' : ''}
+                {state.selected ? <Icon name="check" size={14} /> : ''}
               </button>
 
               <Thumb src={useAlt ? (alt.image || i.image) : i.image} size={40} />
@@ -104,12 +105,12 @@ export default function ShoppingPlan({
                 )}
                 {i.evidence?.length > 0 && (
                   <button className="why" onClick={() => onOpenItem(i.slug)}>
-                    Чому я це пропоную →
+                    Чому саме це →
                   </button>
                 )}
                 {i.alternative_rejected && (
                   <div className="plan-note agent">
-                    🤖 Заміну «{i.alternative_rejected.name}» відхилив: {i.alternative_rejected.why}
+                    Заміна «{i.alternative_rejected.name}» не підійшла: {i.alternative_rejected.why}
                   </div>
                 )}
                 {i.note && !useAlt && (
@@ -131,12 +132,12 @@ export default function ShoppingPlan({
                       </div>
                       <div className="choice-alt-why">
                         {alt.why}
-                        {alt.saved > 0 && <b className="delta down"> · −{Math.round(alt.saved)} ₴</b>}
-                        {alt.saved < 0 && <b className="delta up"> · +{Math.round(-alt.saved)} ₴</b>}
+                        {alt.saved > 0 && <b className="delta down"> · {Math.round(alt.saved)} ₴ дешевше</b>}
+                        {alt.saved < 0 && <b className="delta up"> · {Math.round(-alt.saved)} ₴ дорожче</b>}
                       </div>
                       {alt.composition_known === false && (
                         <div className="over-note" style={{ color: 'var(--money-text)', fontWeight: 600 }}>
-                          ⚠️ Склад не вказано в каталозі — перевірте на упаковці
+                          Склад не вказано в каталозі — перевірте на упаковці
                         </div>
                       )}
                     </div>
@@ -175,7 +176,7 @@ export default function ShoppingPlan({
         {saved > 0 && (
           <div className="row">
             <span className="k">З них зекономлено</span>
-            <span className="v money">−{Math.round(saved)} ₴</span>
+            <span className="v money">{Math.round(saved)} ₴</span>
           </div>
         )}
       </div>

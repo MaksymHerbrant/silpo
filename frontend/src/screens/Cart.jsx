@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import AddToCartButton from '../components/AddToCartButton'
 import Screen from '../components/Screen'
 import Thumb from '../components/Thumb'
+import Icon from '../components/Icon'
 import { api } from '../lib/api'
 import { useCart } from '../lib/cart'
 
@@ -101,7 +102,7 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
             <span className="offer-name">{b.name}</span>
             <span className="plan-meta">
               <span>замість «{b.in_cart}»</span>
-              <span className="delta down">−{Math.round(b.saved)} ₴</span>
+              <span className="delta down">{Math.round(b.saved)} ₴ дешевше</span>
             </span>
           </span>
           <AddToCartButton item={b} source="promo" />
@@ -118,7 +119,7 @@ export default function Cart({ busy, onCheckout, onList, onOpenNutrition }) {
         {betterBlock}
         {!silpo?.count && (
           <div className="center">
-            <div style={{ fontSize: 34, marginBottom: 10 }}>🧺</div>
+            <div style={{ marginBottom: 10, color: 'var(--ink-3)' }}><Icon name="basket" size={40} /></div>
             Кошик порожній
             <p className="muted" style={{ marginTop: 8 }}>
               Додавайте товари кнопкою «+» з будь-якого екрана.

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Icon from '../components/Icon'
 import Sheet from '../components/Sheet'
 
 /** Глибока деталізація однієї позиції: історія, склад, алергени, акція. */
@@ -27,7 +28,7 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
         const tone = blocking.length ? 'bad' : 'ok'
         return (
           <div className={`verdict ${tone}`}>
-            <b>{blocking.length ? '⛔ ' : swaps.length ? '🎯 ' : '✓ '}</b>
+            <b><Icon name={blocking.length ? 'block' : swaps.length ? 'target' : 'check'} size={16} /> </b>
             {blocking.length
               ? 'У складі знайдено ваш алерген'
               : swaps.length
@@ -55,7 +56,7 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
 
       {(item.evidence || []).length > 0 && (
         <div className="card plain">
-          <h3 style={{ marginBottom: 8 }}>Чому я це пропоную</h3>
+          <h3 style={{ marginBottom: 8 }}>Чому саме це</h3>
           <p className="muted" style={{ marginBottom: 10 }}>
             Підстави, які можна перевірити — не міркування моделі.
           </p>
@@ -113,11 +114,11 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
         )}
         <p className="muted" style={{ marginTop: 8 }}>{d.why}</p>
         {item.agent_why && (
-          <p className="muted" style={{ marginTop: 6 }}>🤖 {item.agent_why}</p>
+          <p className="muted" style={{ marginTop: 6 }}>{item.agent_why}</p>
         )}
         {item.alternative_rejected && (
           <p className="over-note">
-            🤖 Агент відхилив заміну «{item.alternative_rejected.name}»:
+            Заміна «{item.alternative_rejected.name}» не підійшла:
             {' '}{item.alternative_rejected.why}
           </p>
         )}
@@ -130,7 +131,7 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
         {item.on_promotion && (
           <div className="kv">
             <span className="k">Було</span>
-            <span className="v">{item.old_price} ₴ <b className="money">−{Math.round(item.saved)} ₴</b></span>
+            <span className="v">{item.old_price} ₴ <b className="money">{Math.round(item.saved)} ₴ дешевше</b></span>
           </div>
         )}
         <div className="kv"><span className="k">Купували разів</span><span className="v">{d.times_bought}</span></div>
@@ -191,15 +192,14 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
           </p>
           {alt.composition_known === false && (
             <p className="over-note" style={{ color: 'var(--money)', fontWeight: 600 }}>
-              ⚠️ Каталог не публікує склад цього товару. Ми не знайшли у ньому
-              вашого алергену лише тому, що перевіряти не було чого — обов'язково
-              прочитайте склад на упаковці.
+              Каталог не публікує склад цього товару, тому перевірити його на ваш
+              алерген неможливо — прочитайте склад на упаковці.
             </p>
           )}
           {alt.over_threshold && (
             <p className="over-note">
-              ⚠️ Цей варіант дорожчий за ваш ціновий поріг. Ми показуємо його лише
-              тому, що в межах порогу товару без вашого алергену не знайшлось.
+              Цей варіант дорожчий за ваш ціновий поріг — у межах порогу товару без
+              вашого алергену не знайшлось.
             </p>
           )}
           <button className="btn" style={{ marginTop: 12 }} onClick={() => { onSwitch(item.slug); onClose() }}>
@@ -223,7 +223,7 @@ export default function ItemDetail({ item, onClose, onSwitch, chosen, onOpenSett
                 </div>
               ))}
               <p className="over-note">
-                Ці варіанти дорожчі за вашу межу, тому ми їх не підставляємо.
+                Ці варіанти дорожчі за вашу межу, тому в план не потрапили.
                 {onOpenSettings && (
                   <> Поріг змінюється в <button className="inline-link" onClick={onOpenSettings}>налаштуваннях</button>.</>
                 )}

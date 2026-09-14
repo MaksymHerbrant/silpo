@@ -56,7 +56,7 @@ def compose(due: list[dict[str, Any]], drops: list[dict[str, Any]]) -> str | Non
     if drops:
         lines = [price_watch.digest_line(d) for d in drops[:MAX_LINES]]
         total = round(sum(d["saved"] for d in drops))
-        blocks.append(f"💰 <b>Подешевшало</b> (−{total} ₴)\n" + "\n".join(lines))
+        blocks.append(f"💰 <b>Подешевшало</b> на {total} ₴\n" + "\n".join(lines))
     if not blocks:
         return None
     return "\n\n".join(blocks)

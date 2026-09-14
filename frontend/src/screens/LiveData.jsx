@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import Icon from '../components/Icon'
 import Screen from '../components/Screen'
 import { api } from '../lib/api'
 
@@ -47,7 +48,7 @@ export default function LiveData({ onBack }) {
       <div className="card plain">
         {(data?.steps || []).map((s) => (
           <div className="live-row" key={s.tool}>
-            <span className={`live-dot${s.done ? ' on' : ''}`}>{s.done ? '✓' : '·'}</span>
+            <span className={`live-dot${s.done ? ' on' : ''}`}>{s.done ? <Icon name="check" size={12} /> : '·'}</span>
             <span className="live-body">
               <span className="live-label">
                 {s.label}

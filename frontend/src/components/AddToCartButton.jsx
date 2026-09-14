@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useCart } from '../lib/cart'
 
 /**
@@ -19,7 +20,7 @@ export default function AddToCartButton({ item, source }) {
       }}
       aria-label={inCart ? `${item.name} вже в кошику, додати ще` : `Додати ${item.name} до кошика`}
     >
-      {busy ? '…' : inCart ? '✓' : '+'}
+      {busy ? '…' : inCart ? <Icon name="check" size={16} /> : '+'}
     </button>
   )
 }

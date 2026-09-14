@@ -71,4 +71,4 @@ def compare(items: list[dict[str, Any]], stored: dict[str, dict[str, Any]]) -> d
 
 def digest_line(drop: dict[str, Any]) -> str:
     tail = " — найнижча ціна за час стеження" if drop["lowest_seen"] else ""
-    return f"• {drop['name']} — {round(drop['price'])} ₴ замість {round(drop['was'])} ₴ (−{drop['pct']}%){tail}"
+    return f"• {drop['name']} — {round(drop['price'])} ₴ замість {round(drop['was'])} ₴ (дешевше на {drop["pct"]}%){tail}"

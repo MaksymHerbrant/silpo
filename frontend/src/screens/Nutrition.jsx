@@ -73,8 +73,8 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
       <div>
         <h1>Одне спостереження</h1>
         <p className="lede">
-          Я бачу лише ваші покупки — не те, що ви справді їсте. Тому не ставлю
-          оцінок раціону, а показую одну конкретну річ, яку помітив.
+          Це видно з ваших покупок — не з того, що ви справді їсте. Тому тут не
+          оцінка раціону, а одна конкретна річ, яку варто помітити.
         </p>
       </div>
 
@@ -91,11 +91,11 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
             <p className="muted" style={{ marginTop: 4 }}>
               {observed.alternative.why}
               {observed.alternative.saved > 0 &&
-                <b className="money"> · −{Math.round(observed.alternative.saved)} ₴</b>}
+                <b className="money"> · {Math.round(observed.alternative.saved)} ₴ дешевше</b>}
             </p>
             {observed.alternative.composition_known === false && (
               <p className="over-note" style={{ color: 'var(--money)', fontWeight: 600 }}>
-                ⚠️ Каталог не публікує склад цієї заміни — прочитайте на упаковці.
+                Каталог не публікує склад цієї заміни — прочитайте на упаковці.
               </p>
             )}
           </div>
@@ -114,15 +114,14 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
             </button>
           </div>
           <button className="why" onClick={() => onOpenItem(observed.slug)}>
-            Чому я це пропоную →
+            Чому саме це →
           </button>
         </div>
       ) : (
         <div className="card plain">
           <p className="muted">
-            Надійного спостереження зараз немає. Каталог «Сільпо» здебільшого не
-            публікує склад товарів, а вгадувати на таких даних я не буду —
-            це було б гірше за мовчання.
+            Надійного спостереження поки немає: каталог «Сільпо» здебільшого не
+            публікує склад товарів, а на здогадках тут нічого не будується.
           </p>
         </div>
       )}
@@ -145,7 +144,7 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
                     <span className="plan-meta">
                       <span>{Math.round(prod.price)} ₴</span>
                       {prod.on_promotion && (
-                        <span className="delta down">−{Math.round(prod.old_price - prod.price)} ₴</span>
+                        <span className="delta down">{Math.round(prod.old_price - prod.price)} ₴</span>
                       )}
                       {prod.composition_known === false && <span>· склад не вказано</span>}
                     </span>
@@ -216,8 +215,8 @@ export default function Nutrition({ plan, onOpenItem, onSwitch, chosen }) {
         {narrow && (
           (narrowData.sugar.length === 0 && narrowData.salt.length === 0) ? (
             <p className="over-note">
-              Каталог «Сільпо» не публікує вміст цукру й солі для ваших товарів.
-              Показувати тут нічого, а вигадувати я не буду.
+              Каталог «Сільпо» не публікує вміст цукру й солі для ваших товарів —
+              тому тут поки порожньо.
             </p>
           ) : (
             <>
