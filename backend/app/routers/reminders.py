@@ -84,4 +84,4 @@ async def price_drops(user_id: str = Depends(current_user_id)) -> dict[str, Any]
 @router.post("/reminders/digest")
 async def send_digest(user_id: str = Depends(current_user_id)) -> dict[str, Any]:
     """Надсилає дайджест собі — щоб побачити, як він виглядає, не чекаючи ночі."""
-    return await digest.send_to_user(user_id, force=True)
+    return await digest.send_to_user(user_id, force=True, preview=True)

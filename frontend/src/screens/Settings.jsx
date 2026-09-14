@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from '../lib/api'
 import Icon from '../components/Icon'
 import Screen from '../components/Screen'
 
@@ -15,6 +16,24 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
   const modes = settings?.options?.modes || []
 
   const [tolKey, setTolKey] = useState(settings?.price_tolerance_key || 'low')
+
+  const [digestBusy, setDigestBusy] = useState(false)
+
+  const [digestNote, setDigestNote] = useState('')
+
+  async function sendDigest() {
+
+    setDigestBusy(true)
+
+    try {
+
+      const r = await api.sendDigest()
+
+      setDigestNote(r.sent ? 'Надіслано — перевірте чат із ботом' : `Нема про що нагадати: ${r.reason}`)
+
+    } catch (e) { setDigestNote(e.message) } finally { setDigestBusy(false) }
+
+  }
   const [mode, setMode] = useState(settings?.mode || 'auto')
 
   const dirty = tolKey !== settings?.price_tolerance_key || mode !== settings?.mode
@@ -143,6 +162,10 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
         </button>
         <button className="link-row" onClick={onOpenLive}>
           <span><Icon name="plug" size={18} /> Живі дані — виклики MCP наживо</span>
+          <span className="chev">›</span>
+        </button>
+        <button className="link-row" onClick={sendDigest} disabled={digestBusy}>
+          <span><Icon name="bell" size={18} /> {digestBusy ? 'Надсилаємо…' : digestNote || 'Надіслати нагадування в бот зараз'}</span>
           <span className="chev">›</span>
         </button>
       </section>

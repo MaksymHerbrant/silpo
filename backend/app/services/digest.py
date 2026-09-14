@@ -62,8 +62,15 @@ def compose(due: list[dict[str, Any]], drops: list[dict[str, Any]]) -> str | Non
     return "\n\n".join(blocks)
 
 
-async def send_to_user(user_id: str, force: bool = False) -> dict[str, Any]:
-    """Збирає й надсилає дайджест одному гостю."""
+async def send_to_user(
+    user_id: str, force: bool = False, preview: bool = False
+) -> dict[str, Any]:
+    """Збирає й надсилає дайджест одному гостю.
+
+    preview — «покажи, як це виглядає»: якщо сьогодні ще нічого не на порозі,
+    беремо найближчі товари з увімкненим нагадуванням. Так гість (і демо)
+    бачить справжнє повідомлення, не чекаючи кінця циклу.
+    """
     user = await repo.get_user(user_id)
     if not user or not user.get("telegram_id"):
         return {"sent": False, "reason": "немає telegram_id"}
@@ -80,9 +87,11 @@ async def send_to_user(user_id: str, force: bool = False) -> dict[str, Any]:
 
     items = plan.get("items") or []
     stored_cycles = await repo.cycles_for(user_id)
-    due = cycles.build(items, stored_cycles)["due"]
+    built = cycles.build(items, stored_cycles)
     # Сповіщаємо лише про те, на що гість сам підписався
-    due = [r for r in due if r["reminder_on"]]
+    due = [r for r in built["due"] if r["reminder_on"]]
+    if preview and not due:
+        due = [r for r in built["upcoming"] if r["reminder_on"]][:3]
 
     snapshot = await repo.price_snapshot(user_id)
     watch = price_watch.compare(items, snapshot)
