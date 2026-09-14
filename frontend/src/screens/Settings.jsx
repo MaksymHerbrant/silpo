@@ -18,21 +18,13 @@ export default function Settings({ settings, restrictions = [], busy, onSave, on
   const [tolKey, setTolKey] = useState(settings?.price_tolerance_key || 'low')
 
   const [digestBusy, setDigestBusy] = useState(false)
-
   const [digestNote, setDigestNote] = useState('')
-
   async function sendDigest() {
-
     setDigestBusy(true)
-
     try {
-
       const r = await api.sendDigest()
-
       setDigestNote(r.sent ? 'Надіслано — перевірте чат із ботом' : `Нема про що нагадати: ${r.reason}`)
-
     } catch (e) { setDigestNote(e.message) } finally { setDigestBusy(false) }
-
   }
   const [mode, setMode] = useState(settings?.mode || 'auto')
 
