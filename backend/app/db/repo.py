@@ -243,6 +243,17 @@ async def get_user_by_telegram_id(telegram_id: int) -> dict[str, Any] | None:
     return await db().select_one("users", {"telegram_id": telegram_id})
 
 
+async def find_user(handle: str) -> dict[str, Any] | None:
+    """Гість за @username (без урахування регістру) або за Telegram ID."""
+    handle = handle.lstrip("@").strip().lower()
+    if handle.isdigit():
+        return await get_user_by_telegram_id(int(handle))
+    for row in await db().select("users", {}):
+        if (row.get("username") or "").lower() == handle:
+            return row
+    return None
+
+
 # --- Цілі та норми ----------------------------------------------------------
 async def get_goal(user_id: str) -> dict[str, Any] | None:
     return await db().select_one("user_goals", {"user_id": user_id})

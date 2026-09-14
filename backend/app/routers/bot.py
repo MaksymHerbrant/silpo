@@ -23,7 +23,7 @@ from app.db import repo
 from app.llm import explain
 from app.mcp.gateway import McpNotConnected
 from app.security.session import current_user_id
-from app.services import cart_analysis, swaps, trends
+from app.services import cart_analysis, digest, swaps, trends
 
 router = APIRouter(tags=["bot"])
 log = logging.getLogger("bot")
@@ -104,6 +104,12 @@ async def _handle_message(message: dict[str, Any]) -> None:
     if not chat_id or not telegram_id:
         return
 
+    # /push @username — член команди надсилає нагадування іншому гостю
+    # саме тоді, коли той знімає екран. Лише для ID зі списку в налаштуваннях.
+    if text.startswith("/push"):
+        await _handle_push(chat_id, int(telegram_id), message.get("text") or "")
+        return
+
     user_id = await _resolve_user(int(telegram_id))
     if not user_id:
         await telegram_api.send_message(
@@ -135,6 +141,34 @@ async def _handle_message(message: dict[str, Any]) -> None:
         "або відкрийте застосунок:",
         report.miniapp_keyboard(),
     )
+
+
+async def _handle_push(chat_id: int, sender_id: int, raw: str) -> None:
+    admins = {a.strip() for a in get_settings().demo_admin_ids.split(",") if a.strip()}
+    if str(sender_id) not in admins:
+        await telegram_api.send_message(chat_id, "Ця команда лише для команди GreenCart.")
+        return
+    parts = raw.split(maxsplit=1)
+    if len(parts) < 2:
+        await telegram_api.send_message(chat_id, "Кому надіслати? Напишіть: /push @username")
+        return
+    target = await repo.find_user(parts[1])
+    if not target:
+        await telegram_api.send_message(chat_id, f"Гостя «{parts[1]}» у базі немає — він має хоч раз відкрити застосунок.")
+        return
+    try:
+        result = await digest.send_to_user(str(target["id"]), force=True, preview=True)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("/push впав")
+        await telegram_api.send_message(chat_id, f"Не вдалось: {exc}")
+        return
+    who = target.get("first_name") or target.get("username") or target["telegram_id"]
+    if result.get("sent"):
+        await telegram_api.send_message(
+            chat_id, f"Надіслано {who}: нагадувань {result.get('due', 0)}, знижок {result.get('drops', 0)}."
+        )
+    else:
+        await telegram_api.send_message(chat_id, f"Не надіслано {who}: {result.get('reason')}")
 
 
 async def _handle_callback(callback: dict[str, Any]) -> None:

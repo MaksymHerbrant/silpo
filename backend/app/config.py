@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_bot_username: str = ""          # без @, напр. nutrikoshyk_bot
     telegram_webapp_short_name: str = "app"  # t.me/<bot>/<app>
+    # Telegram ID членів команди, яким можна командою /push надіслати
+    # нагадування іншому гостю — для зйомки демо в потрібний момент
+    demo_admin_ids: str = ""
     # initData вважається протухлим після N секунд (Telegram рекомендує <= 24h)
     telegram_initdata_max_age: int = 86400
     # secret_token для setWebhook: без нього будь-хто може слати нам фейкові апдейти
