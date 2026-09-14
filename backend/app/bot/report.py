@@ -86,7 +86,7 @@ def swap_keyboard(swap_id: str, price_delta: float | None = None) -> list[list[d
 
 def miniapp_keyboard() -> list[list[dict]]:
     url = get_settings().public_backend_url.rstrip("/")
-    return [[{"text": "📊 Мій Нутрі-профіль", "web_app": {"url": url}}]]
+    return [[{"text": "Відкрити GreenCart", "web_app": {"url": url}}]]
 
 
 def profile_report(trend: dict[str, Any]) -> str:

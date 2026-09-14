@@ -102,7 +102,7 @@ async def send_to_user(
         return {"sent": False, "reason": "нема про що писати"}
 
     await telegram_api.send_message(
-        int(user["telegram_id"]), text, reply_markup={"inline_keyboard": miniapp_keyboard()}
+        int(user["telegram_id"]), text, miniapp_keyboard()
     )
     # save_prefs, а не save_goal: у гостя може ще не бути рядка налаштувань,
     # і save_goal упав би на NOT NULL для goal.
