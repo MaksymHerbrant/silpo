@@ -79,7 +79,9 @@ async def send_to_user(
     if not force and not due_for_digest(goal_row.get("digest_sent_at"), goal_row.get("mode")):
         return {"sent": False, "reason": "надто рано за режимом гостя"}
 
-    plan = pipeline.cached_plan(user_id)
+    # Спершу памʼять процесу, потім база: після рестарту Render памʼять
+    # порожня, і без цього кожен дайджест перебудовував план 20+ секунд
+    plan = await pipeline.cached_plan_async(user_id)
     if not plan or not plan.get("has_data"):
         plan = await pipeline.build_plan(user_id)
         if not plan.get("has_data"):
